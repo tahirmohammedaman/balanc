@@ -1,0 +1,11 @@
+[package]
+name = "balanc"
+version = "0.0.0"
+edition = "2021"
+description = "A statically typed language for double-entry bookkeeping with linear money"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
