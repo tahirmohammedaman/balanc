@@ -1,0 +1,44 @@
+//! End-to-end pipeline tests. Each case is a `.bal` file under `tests/cases/`; its
+//! expected output (trial balance or diagnostics) is snapshotted under
+//! `tests/snapshots/`. Regenerate with `BALANC_BLESS=1 cargo test` — never hand-edit a
+//! snapshot to make a test pass.
+
+use std::fs;
+use std::path::Path;
+
+use balanc::span::SourceFile;
+
+fn run_case(name: &str) {
+    let cases_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases");
+    let snapshots_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+
+    let src_path = cases_dir.join(format!("{name}.bal"));
+    let text =
+        fs::read_to_string(&src_path).unwrap_or_else(|e| panic!("reading {src_path:?}: {e}"));
+    let file = SourceFile::new(format!("{name}.bal"), text);
+    let output = match balanc::run(&file) {
+        Ok(report) => report,
+        Err(diags) => diags,
+    };
+
+    let snapshot_path = snapshots_dir.join(format!("{name}.txt"));
+    if std::env::var("BALANC_BLESS").is_ok() {
+        fs::write(&snapshot_path, &output).unwrap();
+        return;
+    }
+
+    let expected = fs::read_to_string(&snapshot_path).unwrap_or_else(|e| {
+        panic!("reading snapshot {snapshot_path:?}: {e} (run with BALANC_BLESS=1 to create it)")
+    });
+    assert_eq!(output, expected, "snapshot mismatch for '{name}' (run with BALANC_BLESS=1 to update)");
+}
+
+#[test]
+fn coffee_prints_trial_balance() {
+    run_case("coffee");
+}
+
+#[test]
+fn unbalanced_reports_e_unbalanced() {
+    run_case("unbalanced");
+}
