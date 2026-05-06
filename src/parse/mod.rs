@@ -1,11 +1,16 @@
 //! `Vec<Token>` -> `ast::Module`, hand-written recursive descent (D-007).
 //!
-//! Grammar (Slice 0, expression style per D-012):
+//! Grammar (Slice 1, expression style per D-012):
 //!
 //! ```text
 //! Module      := TxnDecl* Eof
-//! TxnDecl     := "txn" String "{" Leg* "}"
-//! Leg         := ("debit" | "credit") "(" AccountPath "," Decimal ")" ";"
+//! TxnDecl     := "txn" String "{" Stmt* "}"
+//! Stmt        := LetStmt | DebitStmt
+//! LetStmt     := "let" Ident "=" MoneyExpr ";"
+//! DebitStmt   := "debit" "(" AccountPath "," MoneyExpr ")" ";"
+//! MoneyExpr   := CreditExpr | Var
+//! CreditExpr  := "credit" "(" AccountPath "," Decimal ")"
+//! Var         := Ident
 //! AccountPath := Ident (":" Ident)*
 //! ```
 //!
@@ -18,7 +23,7 @@ use crate::amount::Amount;
 use crate::diag::{Code, Diagnostic};
 use crate::lex::{Token, TokenKind};
 use crate::span::Span;
-use ast::{AccountPath, Leg, LegKind, Module, TxnDecl};
+use ast::{AccountPath, Module, MoneyExpr, Stmt, TxnDecl};
 
 pub fn parse(tokens: &[Token]) -> (Option<Module>, Vec<Diagnostic>) {
     let mut p = Parser { tokens, pos: 0 };
@@ -84,30 +89,64 @@ impl<'a> Parser<'a> {
             _ => return Err(self.unexpected("a transaction name string")),
         };
         self.expect(&TokenKind::LBrace, "'{'")?;
-        let mut legs = Vec::new();
+        let mut stmts = Vec::new();
         while self.peek().kind != TokenKind::RBrace {
             if self.peek().kind == TokenKind::Eof {
                 return Err(self.unexpected("'}'"));
             }
-            legs.push(self.parse_leg()?);
+            stmts.push(self.parse_stmt()?);
         }
         let end = self.expect(&TokenKind::RBrace, "'}'")?;
-        Ok(TxnDecl { name, legs, span: start.to(end) })
+        Ok(TxnDecl { name, stmts, span: start.to(end) })
     }
 
-    fn parse_leg(&mut self) -> PResult<Leg> {
-        let (kind, start) = match &self.peek().kind {
-            TokenKind::KwDebit => (LegKind::Debit, self.advance().span),
-            TokenKind::KwCredit => (LegKind::Credit, self.advance().span),
-            _ => return Err(self.unexpected("'debit' or 'credit'")),
-        };
+    fn parse_stmt(&mut self) -> PResult<Stmt> {
+        match &self.peek().kind {
+            TokenKind::KwLet => self.parse_let(),
+            TokenKind::KwDebit => self.parse_debit(),
+            _ => Err(self.unexpected("'let' or 'debit'")),
+        }
+    }
+
+    fn parse_let(&mut self) -> PResult<Stmt> {
+        let start = self.expect(&TokenKind::KwLet, "'let'")?;
+        let (name, name_span) = self.parse_ident()?;
+        self.expect(&TokenKind::Eq, "'='")?;
+        let value = self.parse_money_expr()?;
+        let end = self.expect(&TokenKind::Semi, "';'")?;
+        Ok(Stmt::Let { name, name_span, value, span: start.to(end) })
+    }
+
+    fn parse_debit(&mut self) -> PResult<Stmt> {
+        let start = self.expect(&TokenKind::KwDebit, "'debit'")?;
+        self.expect(&TokenKind::LParen, "'('")?;
+        let account = self.parse_account_path()?;
+        self.expect(&TokenKind::Comma, "','")?;
+        let value = self.parse_money_expr()?;
+        self.expect(&TokenKind::RParen, "')'")?;
+        let end = self.expect(&TokenKind::Semi, "';'")?;
+        Ok(Stmt::Debit { account, value, span: start.to(end) })
+    }
+
+    fn parse_money_expr(&mut self) -> PResult<MoneyExpr> {
+        match &self.peek().kind {
+            TokenKind::KwCredit => self.parse_credit(),
+            TokenKind::Ident(_) => {
+                let (name, span) = self.parse_ident()?;
+                Ok(MoneyExpr::Var { name, span })
+            }
+            _ => Err(self.unexpected("'credit(...)' or a variable name")),
+        }
+    }
+
+    fn parse_credit(&mut self) -> PResult<MoneyExpr> {
+        let start = self.expect(&TokenKind::KwCredit, "'credit'")?;
         self.expect(&TokenKind::LParen, "'('")?;
         let account = self.parse_account_path()?;
         self.expect(&TokenKind::Comma, "','")?;
         let amount = self.parse_amount()?;
-        self.expect(&TokenKind::RParen, "')'")?;
-        let end = self.expect(&TokenKind::Semi, "';'")?;
-        Ok(Leg { kind, account, amount, span: start.to(end) })
+        let end = self.expect(&TokenKind::RParen, "')'")?;
+        Ok(MoneyExpr::Credit { account, amount, span: start.to(end) })
     }
 
     fn parse_account_path(&mut self) -> PResult<AccountPath> {
@@ -131,7 +170,7 @@ impl<'a> Parser<'a> {
                 let span = self.advance().span;
                 Ok((s, span))
             }
-            _ => Err(self.unexpected("an account name")),
+            _ => Err(self.unexpected("an identifier")),
         }
     }
 
@@ -150,6 +189,7 @@ impl<'a> Parser<'a> {
 fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::KwTxn => "'txn'".to_string(),
+        TokenKind::KwLet => "'let'".to_string(),
         TokenKind::KwDebit => "'debit'".to_string(),
         TokenKind::KwCredit => "'credit'".to_string(),
         TokenKind::Ident(s) => format!("identifier '{s}'"),
@@ -162,6 +202,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Comma => "','".to_string(),
         TokenKind::Colon => "':'".to_string(),
         TokenKind::Semi => "';'".to_string(),
+        TokenKind::Eq => "'='".to_string(),
         TokenKind::Eof => "end of input".to_string(),
     }
 }
@@ -194,19 +235,44 @@ mod tests {
     }
 
     #[test]
-    fn parses_two_leg_transaction() {
+    fn parses_let_and_debit() {
         let (module, diags) = parse_src(
-            r#"txn "coffee" { debit(expenses:coffee, 45.00); credit(assets:cash, 45.00); }"#,
+            r#"txn "coffee" { let m = credit(assets:cash, 45.00); debit(expenses:coffee, m); }"#,
         );
         assert!(diags.is_empty());
         let module = module.unwrap();
         assert_eq!(module.txns.len(), 1);
         let txn = &module.txns[0];
         assert_eq!(txn.name, "coffee");
-        assert_eq!(txn.legs.len(), 2);
-        assert_eq!(txn.legs[0].kind, LegKind::Debit);
-        assert_eq!(txn.legs[0].account.to_string(), "expenses:coffee");
-        assert_eq!(txn.legs[0].amount.cents(), 4500);
+        assert_eq!(txn.stmts.len(), 2);
+        match &txn.stmts[0] {
+            Stmt::Let { name, value: MoneyExpr::Credit { account, amount, .. }, .. } => {
+                assert_eq!(name, "m");
+                assert_eq!(account.to_string(), "assets:cash");
+                assert_eq!(amount.cents(), 4500);
+            }
+            _ => panic!("expected a let-binding of a credit"),
+        }
+        match &txn.stmts[1] {
+            Stmt::Debit { account, value: MoneyExpr::Var { name, .. }, .. } => {
+                assert_eq!(account.to_string(), "expenses:coffee");
+                assert_eq!(name, "m");
+            }
+            _ => panic!("expected a debit of a variable"),
+        }
+    }
+
+    #[test]
+    fn credit_can_be_inlined_in_a_debit() {
+        let (module, diags) =
+            parse_src(r#"txn "coffee" { debit(expenses:coffee, credit(assets:cash, 45.00)); }"#);
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        assert_eq!(module.txns[0].stmts.len(), 1);
+        assert!(matches!(
+            &module.txns[0].stmts[0],
+            Stmt::Debit { value: MoneyExpr::Credit { .. }, .. }
+        ));
     }
 
     #[test]
@@ -219,8 +285,18 @@ mod tests {
 
     #[test]
     fn missing_brace_is_a_diagnostic_not_a_panic() {
-        let (module, diags) = parse_src(r#"txn "coffee" { debit(expenses:coffee, 45.00);"#);
+        let (module, diags) =
+            parse_src(r#"txn "coffee" { debit(expenses:coffee, credit(assets:cash, 45.00));"#);
         assert!(module.is_none());
         assert_eq!(diags[0].code, Code::ParseUnexpectedEof);
+    }
+
+    #[test]
+    fn bare_literal_debit_argument_is_a_parse_error() {
+        // Slice 0's grammar allowed `debit(acct, 45.00)` directly; Slice 1 requires a
+        // MoneyExpr (a `credit(...)` or a variable) in that position (D-005).
+        let (module, diags) = parse_src(r#"txn "coffee" { debit(expenses:coffee, 45.00); }"#);
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::ParseUnexpectedToken);
     }
 }

@@ -13,6 +13,7 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     KwTxn,
+    KwLet,
     KwDebit,
     KwCredit,
     Ident(String),
@@ -29,6 +30,7 @@ pub enum TokenKind {
     Comma,
     Colon,
     Semi,
+    Eq,
     Eof,
 }
 
@@ -99,6 +101,10 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                 tokens.push(tok(TokenKind::Semi, start, start + 1));
                 pos += 1;
             }
+            '=' => {
+                tokens.push(tok(TokenKind::Eq, start, start + 1));
+                pos += 1;
+            }
             '"' => {
                 pos += 1;
                 let content_start = pos;
@@ -152,6 +158,7 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                 let text = &source[start..pos];
                 let kind = match text {
                     "txn" => TokenKind::KwTxn,
+                    "let" => TokenKind::KwLet,
                     "debit" => TokenKind::KwDebit,
                     "credit" => TokenKind::KwCredit,
                     _ => TokenKind::Ident(text.to_string()),
@@ -182,7 +189,7 @@ mod tests {
 
     #[test]
     fn spans_round_trip_to_source_text() {
-        let src = "txn \"coffee\" { debit(expenses:coffee, 45.00); }";
+        let src = r#"txn "coffee" { let m = credit(assets:cash, 45.00); debit(expenses:coffee, m); }"#;
         let (tokens, diags) = lex(src);
         assert!(diags.is_empty());
         let tokens = tokens.unwrap();
@@ -204,11 +211,17 @@ mod tests {
 
     #[test]
     fn keywords_recognized() {
-        let (tokens, _) = lex("txn debit credit");
+        let (tokens, _) = lex("txn let debit credit");
         let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
-            vec![TokenKind::KwTxn, TokenKind::KwDebit, TokenKind::KwCredit, TokenKind::Eof]
+            vec![
+                TokenKind::KwTxn,
+                TokenKind::KwLet,
+                TokenKind::KwDebit,
+                TokenKind::KwCredit,
+                TokenKind::Eof
+            ]
         );
     }
 
