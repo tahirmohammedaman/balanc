@@ -39,6 +39,11 @@ fn coffee_prints_trial_balance() {
 }
 
 #[test]
-fn unbalanced_reports_e_unbalanced() {
-    run_case("unbalanced");
+fn dropped_value_reports_e_dropped() {
+    run_case("dropped");
+}
+
+#[test]
+fn reused_value_reports_e_reused() {
+    run_case("reused");
 }

@@ -1,0 +1,1 @@
+dropped.bal:2:7: error[E_DROPPED]: this money value is never consumed

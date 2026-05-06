@@ -1,4 +1,4 @@
 txn "coffee" {
-  debit(expenses:coffee, 45.00);
-  credit(assets:cash, 45.00);
+  let m = credit(assets:cash, 45.00);
+  debit(expenses:coffee, m);
 }
