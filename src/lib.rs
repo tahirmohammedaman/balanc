@@ -1,16 +1,17 @@
-//! balanc pipeline: source text -> lex -> parse -> check -> eval -> render.
+//! balanc pipeline: source text -> lex -> parse -> resolve -> typeck -> eval -> render.
 //!
 //! [`run`] is the single entry point both the `main` binary and the end-to-end tests
 //! drive, so the two can never disagree about what a given source file produces.
 
 pub mod amount;
-pub mod check;
 pub mod diag;
 pub mod eval;
 pub mod lex;
 pub mod parse;
 pub mod render;
+pub mod resolve;
 pub mod span;
+pub mod typeck;
 
 use diag::{sort_by_span, Diagnostic};
 use span::SourceFile;
@@ -30,12 +31,19 @@ pub fn run(file: &SourceFile) -> Result<String, String> {
         None => return Err(render_diags(diags, file)),
     };
 
-    let diags = check::check_balance(&module);
-    if !diags.is_empty() {
-        return Err(render_diags(diags, file));
-    }
+    let (resolved, diags) = resolve::resolve(module);
+    let resolved = match resolved {
+        Some(resolved) => resolved,
+        None => return Err(render_diags(diags, file)),
+    };
 
-    let ledger = eval::eval(&module);
+    let (typed, diags) = typeck::typeck(resolved);
+    let typed = match typed {
+        Some(typed) => typed,
+        None => return Err(render_diags(diags, file)),
+    };
+
+    let ledger = eval::eval(&typed);
     Ok(render::render_trial_balance(&ledger))
 }
 
