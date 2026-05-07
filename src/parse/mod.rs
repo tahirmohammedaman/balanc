@@ -1,29 +1,36 @@
 //! `Vec<Token>` -> `ast::Module`, hand-written recursive descent (D-007).
 //!
-//! Grammar (Slice 1, expression style per D-012):
+//! Grammar (Slice 2):
 //!
 //! ```text
-//! Module      := TxnDecl* Eof
-//! TxnDecl     := "txn" String "{" Stmt* "}"
-//! Stmt        := LetStmt | DebitStmt
-//! LetStmt     := "let" Ident "=" MoneyExpr ";"
-//! DebitStmt   := "debit" "(" AccountPath "," MoneyExpr ")" ";"
-//! MoneyExpr   := CreditExpr | Var
-//! CreditExpr  := "credit" "(" AccountPath "," Decimal ")"
-//! Var         := Ident
-//! AccountPath := Ident (":" Ident)*
+//! Module        := Decl* Eof
+//! Decl          := CurrencyDecl | AccountDecl | TxnDecl
+//! CurrencyDecl  := "currency" Ident "{" "scale" "=" Decimal "}"
+//! AccountDecl   := "account" AccountPath "{" "currency" "=" Ident "}"
+//! TxnDecl       := "txn" String "{" Stmt* "}"
+//! Stmt          := LetStmt | DebitStmt
+//! LetStmt       := "let" Ident "=" MoneyExpr ";"
+//! DebitStmt     := "debit" "(" AccountPath "," MoneyExpr ")" ";"
+//! MoneyExpr     := CreditExpr | Var
+//! CreditExpr    := "credit" "(" AccountPath "," Decimal ")"
+//! Var           := Ident
+//! AccountPath   := Ident (":" Ident)*
 //! ```
+//!
+//! `CurrencyDecl`, `AccountDecl`, and `TxnDecl` may appear in any order at module
+//! level — nothing here requires currencies before the accounts that use them, or
+//! either before the transactions that reference them; `resolve` builds both tables
+//! before walking transaction bodies.
 //!
 //! No error recovery yet (Slice 6): the first unexpected token stops parsing and
 //! returns a single diagnostic, matching the lexer's fatal-error behaviour.
 
 pub mod ast;
 
-use crate::amount::Amount;
 use crate::diag::{Code, Diagnostic};
 use crate::lex::{Token, TokenKind};
 use crate::span::Span;
-use ast::{AccountPath, Module, MoneyExpr, Stmt, TxnDecl};
+use ast::{AccountDecl, AccountPath, CurrencyDecl, DecimalLiteral, Module, MoneyExpr, Stmt, TxnDecl};
 
 pub fn parse(tokens: &[Token]) -> (Option<Module>, Vec<Diagnostic>) {
     let mut p = Parser { tokens, pos: 0 };
@@ -71,11 +78,54 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_module(&mut self) -> PResult<Module> {
+        let mut currencies = Vec::new();
+        let mut accounts = Vec::new();
         let mut txns = Vec::new();
         while self.peek().kind != TokenKind::Eof {
-            txns.push(self.parse_txn()?);
+            match &self.peek().kind {
+                TokenKind::KwCurrency => currencies.push(self.parse_currency_decl()?),
+                TokenKind::KwAccount => accounts.push(self.parse_account_decl()?),
+                TokenKind::KwTxn => txns.push(self.parse_txn()?),
+                _ => return Err(self.unexpected("'currency', 'account', or 'txn'")),
+            }
         }
-        Ok(Module { txns })
+        Ok(Module { currencies, accounts, txns })
+    }
+
+    fn parse_currency_decl(&mut self) -> PResult<CurrencyDecl> {
+        let start = self.expect(&TokenKind::KwCurrency, "'currency'")?;
+        let (name, name_span) = self.parse_ident()?;
+        self.expect(&TokenKind::LBrace, "'{'")?;
+        self.expect(&TokenKind::KwScale, "'scale'")?;
+        self.expect(&TokenKind::Eq, "'='")?;
+        let (scale, scale_span) = self.parse_scale()?;
+        let end = self.expect(&TokenKind::RBrace, "'}'")?;
+        Ok(CurrencyDecl { name, name_span, scale, scale_span, span: start.to(end) })
+    }
+
+    fn parse_scale(&mut self) -> PResult<(u32, Span)> {
+        match &self.peek().kind {
+            TokenKind::Decimal(text) if !text.contains('.') => {
+                let text = text.clone();
+                let span = self.advance().span;
+                let scale = text.parse().map_err(|_| {
+                    Diagnostic::new(Code::ParseUnexpectedToken, "scale is too large", span)
+                })?;
+                Ok((scale, span))
+            }
+            _ => Err(self.unexpected("a whole number")),
+        }
+    }
+
+    fn parse_account_decl(&mut self) -> PResult<AccountDecl> {
+        let start = self.expect(&TokenKind::KwAccount, "'account'")?;
+        let path = self.parse_account_path()?;
+        self.expect(&TokenKind::LBrace, "'{'")?;
+        self.expect(&TokenKind::KwCurrency, "'currency'")?;
+        self.expect(&TokenKind::Eq, "'='")?;
+        let (currency, currency_span) = self.parse_ident()?;
+        let end = self.expect(&TokenKind::RBrace, "'}'")?;
+        Ok(AccountDecl { path, currency, currency_span, span: start.to(end) })
     }
 
     fn parse_txn(&mut self) -> PResult<TxnDecl> {
@@ -174,12 +224,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_amount(&mut self) -> PResult<Amount> {
+    fn parse_amount(&mut self) -> PResult<DecimalLiteral> {
         match &self.peek().kind {
             TokenKind::Decimal(text) => {
-                let amount = amount_from_literal(text);
-                self.advance();
-                Ok(amount)
+                let text = text.clone();
+                let span = self.advance().span;
+                Ok(DecimalLiteral { text, span })
             }
             _ => Err(self.unexpected("an amount")),
         }
@@ -192,6 +242,9 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::KwLet => "'let'".to_string(),
         TokenKind::KwDebit => "'debit'".to_string(),
         TokenKind::KwCredit => "'credit'".to_string(),
+        TokenKind::KwCurrency => "'currency'".to_string(),
+        TokenKind::KwAccount => "'account'".to_string(),
+        TokenKind::KwScale => "'scale'".to_string(),
         TokenKind::Ident(s) => format!("identifier '{s}'"),
         TokenKind::Decimal(s) => format!("number '{s}'"),
         TokenKind::Str(s) => format!("string \"{s}\""),
@@ -205,22 +258,6 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Eq => "'='".to_string(),
         TokenKind::Eof => "end of input".to_string(),
     }
-}
-
-/// Lowers literal text the lexer already validated (digits, optional '.', at most 2
-/// fraction digits) into cents. Not a `TryFrom` because a malformed literal can never
-/// reach here — the lexer rejects it first.
-fn amount_from_literal(text: &str) -> Amount {
-    let (whole, frac) = match text.split_once('.') {
-        Some((w, f)) => (w, f),
-        None => (text, ""),
-    };
-    let whole: i64 = whole.parse().expect("internal error: lexer produced a malformed decimal");
-    let mut frac_cents: i64 = frac.parse().unwrap_or(0);
-    if frac.len() == 1 {
-        frac_cents *= 10;
-    }
-    Amount::from_cents(whole * 100 + frac_cents)
 }
 
 #[cfg(test)]
@@ -249,7 +286,7 @@ mod tests {
             Stmt::Let { name, value: MoneyExpr::Credit { account, amount, .. }, .. } => {
                 assert_eq!(name, "m");
                 assert_eq!(account.to_string(), "assets:cash");
-                assert_eq!(amount.cents(), 4500);
+                assert_eq!(amount.text, "45.00");
             }
             _ => panic!("expected a let-binding of a credit"),
         }
@@ -276,11 +313,22 @@ mod tests {
     }
 
     #[test]
-    fn amount_literal_padding() {
-        assert_eq!(amount_from_literal("45").cents(), 4500);
-        assert_eq!(amount_from_literal("45.5").cents(), 4550);
-        assert_eq!(amount_from_literal("45.00").cents(), 4500);
-        assert_eq!(amount_from_literal("0.01").cents(), 1);
+    fn parses_currency_and_account_decls() {
+        let (module, diags) = parse_src(
+            r#"
+            currency ETB { scale = 2 }
+            account assets:cash { currency = ETB }
+            txn "coffee" { let m = credit(assets:cash, 45.00); debit(expenses:coffee, m); }
+            "#,
+        );
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        assert_eq!(module.currencies.len(), 1);
+        assert_eq!(module.currencies[0].name, "ETB");
+        assert_eq!(module.currencies[0].scale, 2);
+        assert_eq!(module.accounts.len(), 1);
+        assert_eq!(module.accounts[0].path.to_string(), "assets:cash");
+        assert_eq!(module.accounts[0].currency, "ETB");
     }
 
     #[test]

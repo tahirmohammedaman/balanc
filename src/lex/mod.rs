@@ -2,10 +2,12 @@
 //! lexer touches source text directly except `diag`, which resolves a span back to
 //! line/column for rendering.
 //!
-//! Money amounts have a fixed scale of 2 for Slice 0 (per-currency scale lands in
-//! Slice 2), so a decimal literal with more than two fraction digits is a lex error.
-//! There is no `-` token in numeric-literal position, so a negative literal cannot be
-//! written at all (D-014) — this is enforced by omission, not by a dedicated check.
+//! A decimal literal's fraction-digit count is only structurally bounded here (it must
+//! have at least one digit if a `.` is present); whether it fits a particular
+//! currency's scale is a `typeck`-time question starting Slice 2 (D-024), since scale
+//! is a per-currency property, not a language constant. There is no `-` token in
+//! numeric-literal position, so a negative literal cannot be written at all (D-014) —
+//! this is enforced by omission, not by a dedicated check.
 
 use crate::diag::{Code, Diagnostic};
 use crate::span::Span;
@@ -16,6 +18,9 @@ pub enum TokenKind {
     KwLet,
     KwDebit,
     KwCredit,
+    KwCurrency,
+    KwAccount,
+    KwScale,
     Ident(String),
     /// Raw literal text, e.g. `"45"` or `"45.00"`; lowering to `Amount` happens in the
     /// parser, which is where a per-syntax-position error (e.g. wrong arg count)
@@ -126,22 +131,11 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                 while pos < bytes.len() && (bytes[pos] as char).is_ascii_digit() {
                     pos += 1;
                 }
-                let mut frac_digits = 0usize;
-                let mut frac_start = pos;
                 if pos < bytes.len() && bytes[pos] == b'.' {
                     pos += 1;
-                    frac_start = pos;
                     while pos < bytes.len() && (bytes[pos] as char).is_ascii_digit() {
                         pos += 1;
-                        frac_digits += 1;
                     }
-                }
-                if frac_digits > 2 {
-                    fatal!(
-                        Code::LexTooManyFractionDigits,
-                        "amounts have at most 2 fractional digits",
-                        Span::new(frac_start as u32, pos as u32)
-                    );
                 }
                 let text = &source[start..pos];
                 tokens.push(tok(TokenKind::Decimal(text.to_string()), start, pos));
@@ -161,6 +155,9 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                     "let" => TokenKind::KwLet,
                     "debit" => TokenKind::KwDebit,
                     "credit" => TokenKind::KwCredit,
+                    "currency" => TokenKind::KwCurrency,
+                    "account" => TokenKind::KwAccount,
+                    "scale" => TokenKind::KwScale,
                     _ => TokenKind::Ident(text.to_string()),
                 };
                 tokens.push(tok(kind, start, pos));
@@ -211,7 +208,7 @@ mod tests {
 
     #[test]
     fn keywords_recognized() {
-        let (tokens, _) = lex("txn let debit credit");
+        let (tokens, _) = lex("txn let debit credit currency account scale");
         let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -220,16 +217,22 @@ mod tests {
                 TokenKind::KwLet,
                 TokenKind::KwDebit,
                 TokenKind::KwCredit,
+                TokenKind::KwCurrency,
+                TokenKind::KwAccount,
+                TokenKind::KwScale,
                 TokenKind::Eof
             ]
         );
     }
 
     #[test]
-    fn too_many_fraction_digits_is_fatal() {
-        let (tokens, diags) = lex("45.123");
-        assert!(tokens.is_none());
-        assert_eq!(diags[0].code, Code::LexTooManyFractionDigits);
+    fn any_number_of_fraction_digits_lexes_fine_now() {
+        // Slice 2 (D-024): scale is a per-currency property checked at typeck time,
+        // not a lex-time constant, so the lexer no longer bounds fraction digits.
+        let (tokens, diags) = lex("45.12345");
+        assert!(diags.is_empty());
+        let tokens = tokens.unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Decimal("45.12345".to_string()));
     }
 
     #[test]
