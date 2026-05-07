@@ -44,7 +44,7 @@ pub fn run(file: &SourceFile) -> Result<String, String> {
     };
 
     let ledger = eval::eval(&typed);
-    Ok(render::render_trial_balance(&ledger))
+    Ok(render::render_trial_balance(&typed, &ledger))
 }
 
 fn render_diags(mut diags: Vec<Diagnostic>, file: &SourceFile) -> String {

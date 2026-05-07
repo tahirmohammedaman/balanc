@@ -7,13 +7,15 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::amount::Amount;
-use crate::resolve::SymbolId;
+use crate::resolve::{AccountInfo, SymbolId};
 use crate::typeck::{TModule, TMoneyExpr, TStmt};
 
 /// Per-account running balance, keyed by the account path's rendered form
-/// (`"assets:cash"`). Debits increase a balance, credits decrease it — the raw
-/// double-entry convention with no normal-balance sign flip yet (that lands with
-/// account declarations in Slice 5).
+/// (`"assets:cash"`) — every account has exactly one currency (its declaration), so
+/// the path alone is enough to key by; `render` looks the currency back up via
+/// `TModule::accounts` when it needs it. Debits increase a balance, credits decrease
+/// it — the raw double-entry convention with no normal-balance sign flip yet (that
+/// lands with account declarations in Slice 5).
 pub type LedgerState = BTreeMap<String, Amount>;
 
 pub fn eval(module: &TModule) -> LedgerState {
@@ -23,12 +25,12 @@ pub fn eval(module: &TModule) -> LedgerState {
         for stmt in &txn.stmts {
             match stmt {
                 TStmt::Let { symbol, value, .. } => {
-                    let amount = eval_money_expr(value, &mut env, &mut ledger);
+                    let amount = eval_money_expr(value, &module.accounts, &mut env, &mut ledger);
                     env.insert(*symbol, amount);
                 }
                 TStmt::Debit { account, value, .. } => {
-                    let amount = eval_money_expr(value, &mut env, &mut ledger);
-                    post(&mut ledger, account.to_string(), amount);
+                    let amount = eval_money_expr(value, &module.accounts, &mut env, &mut ledger);
+                    post(&mut ledger, &module.accounts[account.0 as usize].path, amount);
                 }
             }
         }
@@ -41,12 +43,13 @@ pub fn eval(module: &TModule) -> LedgerState {
 /// moves the amount out of `env` — the runtime counterpart of Γ's `consume`.
 fn eval_money_expr(
     expr: &TMoneyExpr,
+    accounts: &[AccountInfo],
     env: &mut HashMap<SymbolId, Amount>,
     ledger: &mut LedgerState,
 ) -> Amount {
     match expr {
         TMoneyExpr::Credit { account, amount } => {
-            post(ledger, account.to_string(), -*amount);
+            post(ledger, &accounts[account.0 as usize].path, -*amount);
             *amount
         }
         TMoneyExpr::Var { symbol } => env
@@ -55,8 +58,8 @@ fn eval_money_expr(
     }
 }
 
-fn post(ledger: &mut LedgerState, account: String, delta: Amount) {
-    let balance = ledger.entry(account).or_insert(Amount::ZERO);
+fn post(ledger: &mut LedgerState, account: &str, delta: Amount) {
+    let balance = ledger.entry(account.to_string()).or_insert(Amount::ZERO);
     *balance = *balance + delta;
 }
 
@@ -68,8 +71,15 @@ mod tests {
     use crate::resolve::resolve;
     use crate::typeck::typeck;
 
+    const PRELUDE: &str = r#"
+        currency ETB { scale = 2 }
+        account assets:cash { currency = ETB }
+        account expenses:coffee { currency = ETB }
+    "#;
+
     fn eval_src(src: &str) -> LedgerState {
-        let (tokens, _) = lex(src);
+        let src = format!("{PRELUDE} {src}");
+        let (tokens, _) = lex(&src);
         let (module, _) = parse(&tokens.unwrap());
         let (resolved, _) = resolve(module.unwrap());
         let (typed, diags) = typeck(resolved.unwrap());
