@@ -1,0 +1,2 @@
+undeclared_account.bal:4:9: error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared
+undeclared_account.bal:4:33: error[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared

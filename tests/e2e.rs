@@ -47,3 +47,28 @@ fn dropped_value_reports_e_dropped() {
 fn reused_value_reports_e_reused() {
     run_case("reused");
 }
+
+#[test]
+fn currency_mismatch_reports_e_currency_mismatch() {
+    run_case("currency_mismatch");
+}
+
+#[test]
+fn multi_currency_prints_one_section_per_currency() {
+    run_case("multi_currency");
+}
+
+#[test]
+fn undeclared_account_reports_e_undeclared_account() {
+    run_case("undeclared_account");
+}
+
+#[test]
+fn unknown_currency_reports_e_unknown_currency() {
+    run_case("unknown_currency");
+}
+
+#[test]
+fn too_many_fraction_digits_reports_the_currency_and_scale() {
+    run_case("too_many_fraction_digits");
+}

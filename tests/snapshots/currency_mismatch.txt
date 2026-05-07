@@ -1,0 +1,2 @@
+currency_mismatch.bal:9:3: error[E_CURRENCY_MISMATCH]: account 'expenses:coffee' expects currency 'ETB', but this money is 'USD'
+currency_mismatch.bal:8:11: note: this money's currency was established here

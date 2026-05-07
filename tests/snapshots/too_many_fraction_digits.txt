@@ -1,0 +1,1 @@
+too_many_fraction_digits.bal:7:46: error[E_TOO_MANY_FRACTION_DIGITS]: amount has 2 fractional digits, but currency 'JPY' has scale 0
