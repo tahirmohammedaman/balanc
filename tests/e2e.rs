@@ -72,3 +72,28 @@ fn unknown_currency_reports_e_unknown_currency() {
 fn too_many_fraction_digits_reports_the_currency_and_scale() {
     run_case("too_many_fraction_digits");
 }
+
+#[test]
+fn convert_and_absorb_round_trip_cleanly() {
+    run_case("convert_and_absorb");
+}
+
+#[test]
+fn dropped_residue_reports_e_dropped() {
+    run_case("dropped_residue");
+}
+
+#[test]
+fn convert_currency_mismatch_reports_e_currency_mismatch() {
+    run_case("convert_currency_mismatch");
+}
+
+#[test]
+fn debiting_a_residue_reports_e_expected_money() {
+    run_case("expected_money_found_residue");
+}
+
+#[test]
+fn absorbing_money_reports_e_expected_residue() {
+    run_case("expected_residue_found_money");
+}

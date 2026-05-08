@@ -1,0 +1,7 @@
+Trial Balance (USD)
+  assets:usd_cash               -100.01
+  Total                         -100.01
+Trial Balance (ETB)
+  assets:etb_cash               5720.57
+  income:fx_rounding               0.00
+  Total                         5720.57

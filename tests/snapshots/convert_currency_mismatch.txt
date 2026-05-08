@@ -1,0 +1,2 @@
+convert_currency_mismatch.bal:11:3: error[E_CURRENCY_MISMATCH]: rate 'usd_etb' expects currency 'USD', but this money is 'ETB'
+convert_currency_mismatch.bal:10:11: note: this money's currency was established here

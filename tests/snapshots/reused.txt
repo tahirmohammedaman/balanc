@@ -1,2 +1,2 @@
-reused.bal:10:21: error[E_REUSED]: this money value has already been consumed
+reused.bal:10:21: error[E_REUSED]: this value has already been consumed
 reused.bal:9:21: note: first consumed here

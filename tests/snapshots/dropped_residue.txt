@@ -1,0 +1,1 @@
+dropped_residue.bal:11:12: error[E_DROPPED]: this conversion residue is never consumed
