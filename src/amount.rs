@@ -34,16 +34,11 @@ impl Amount {
     /// exceeds `scale`; the caller (`typeck`) names the currency and its scale in the
     /// diagnostic, since this module doesn't know either (D-024).
     pub fn from_literal(text: &str, scale: u32) -> Result<Amount, u32> {
-        let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
-        let frac_digits = frac.len() as u32;
+        let (numerator, frac_digits) = parse_fixed_point(text);
         if frac_digits > scale {
             return Err(frac_digits);
         }
-        let whole: i64 = whole.parse().expect("internal error: lexer produced a malformed decimal");
-        let frac_value: i64 = if frac.is_empty() { 0 } else { frac.parse().unwrap() };
-        let base = 10i64.pow(scale);
-        let frac_base = 10i64.pow(frac_digits);
-        Ok(Amount(whole * base + frac_value * (base / frac_base)))
+        Ok(Amount(numerator * 10i64.pow(scale - frac_digits)))
     }
 
     /// Renders this amount at `scale` fraction digits (e.g. `scale = 2` -> `"45.00"`,
@@ -93,6 +88,19 @@ impl Neg for Amount {
     }
 }
 
+/// Splits a lexer-validated decimal literal's raw text into a single integer
+/// numerator and its fraction-digit count, e.g. `"57.20"` -> `(5720, 2)`. Shared by
+/// `Amount::from_literal` (which then needs a currency's scale to finish lowering)
+/// and a `rate`'s own literal (`resolve::resolve_rates`, Slice 3), which has no scale
+/// to validate against — a rate's precision is whatever the author wrote.
+pub fn parse_fixed_point(text: &str) -> (i64, u32) {
+    let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
+    let frac_digits = frac.len() as u32;
+    let whole: i64 = whole.parse().expect("internal error: lexer produced a malformed decimal");
+    let frac_value: i64 = if frac.is_empty() { 0 } else { frac.parse().unwrap() };
+    (whole * 10i64.pow(frac_digits) + frac_value, frac_digits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +143,12 @@ mod tests {
     #[test]
     fn from_literal_rejects_too_many_fraction_digits() {
         assert_eq!(Amount::from_literal("45.123", 2), Err(3));
+    }
+
+    #[test]
+    fn parse_fixed_point_splits_numerator_and_frac_digits() {
+        assert_eq!(parse_fixed_point("57.20"), (5720, 2));
+        assert_eq!(parse_fixed_point("45"), (45, 0));
+        assert_eq!(parse_fixed_point("0.001"), (1, 3));
     }
 }

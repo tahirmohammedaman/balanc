@@ -1,20 +1,26 @@
 //! `ast::Module` -> id-resolved names. No linearity or currency-*matching* checking
-//! yet (that's `typeck`'s job); this stage answers three name-resolution questions:
+//! yet (that's `typeck`'s job); this stage answers four name-resolution questions:
 //! "which currency does this name refer to?", "which declared account does this path
-//! refer to?", and "which `let` binding does this `Var` refer to?" — rejecting a name
-//! that refers to nothing in each case.
+//! refer to?", "which declared rate does this name refer to?", and "which `let` (or
+//! `convert`) binding does this name refer to?" — rejecting a name that refers to
+//! nothing in each case.
 //!
-//! Currencies and accounts are resolved once, module-wide, before any transaction body
-//! is walked (D-022): a `credit`/`debit`'s account must already be declared, since
-//! Slice 2 infers a value's currency from the account it's credited from, and there is
-//! nothing to infer from an undeclared one.
+//! Currencies, accounts, and rates are resolved once, module-wide, before any
+//! transaction body is walked (D-022): a `credit`/`debit`'s account must already be
+//! declared, since Slice 2 infers a value's currency from the account it's credited
+//! from, and there is nothing to infer from an undeclared one. Rates follow the same
+//! pattern for `convert` (Slice 3).
 //!
 //! Scope inside a transaction body is flat and per-transaction (D-013: transactions
 //! are closed, so nothing crosses a transaction boundary) and shadowing is allowed: a
 //! second `let` with a reused name simply makes later references resolve to the new
 //! binding. If the shadowed binding was never consumed, `typeck`'s residual-context
 //! check reports that on its own as `E_DROPPED` — resolve does not need a separate
-//! duplicate-binding diagnostic for it (D-020).
+//! duplicate-binding diagnostic for it (D-020). `convert`'s two bindings (a `Money`
+//! and a `Residue`, D-026) go into the same flat scope as an ordinary `let` — resolve
+//! doesn't distinguish the two kinds of binding at all; that distinction (and the
+//! `E_EXPECTED_MONEY`/`E_EXPECTED_RESIDUE` diagnostics it drives) is `typeck`'s job,
+//! once each binding's kind is actually known.
 
 use std::collections::HashMap;
 
@@ -31,6 +37,9 @@ pub struct CurrencyId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AccountId(pub u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RateId(pub u32);
+
 pub struct CurrencyInfo {
     pub name: String,
     pub scale: u32,
@@ -42,9 +51,24 @@ pub struct AccountInfo {
     pub currency: CurrencyId,
 }
 
+/// A declared conversion rate. `numerator`/`scale` are the rate's own literal lowered
+/// via `amount::parse_fixed_point` (D-027) — a rate has no currency-derived scale
+/// ceiling to check against, unlike an `Amount` literal, so it's just accepted as
+/// written. The rounding mode isn't stored: `round down` is required syntax (D-016)
+/// but `down` is the only value that ever type-checks (D-027), so there's nothing to
+/// branch on yet.
+pub struct RateInfo {
+    pub name: String,
+    pub from: CurrencyId,
+    pub to: CurrencyId,
+    pub numerator: i64,
+    pub scale: u32,
+}
+
 pub struct ResolvedModule {
     pub currencies: Vec<CurrencyInfo>,
     pub accounts: Vec<AccountInfo>,
+    pub rates: Vec<RateInfo>,
     pub txns: Vec<ResolvedTxn>,
 }
 
@@ -56,7 +80,21 @@ pub struct ResolvedTxn {
 
 pub enum ResolvedStmt {
     Let { symbol: SymbolId, name_span: Span, value: ResolvedMoneyExpr, span: Span },
+    /// `let (primary, residual) = convert(money, rate);` — see D-026.
+    Convert {
+        primary: SymbolId,
+        primary_span: Span,
+        residual: SymbolId,
+        residual_span: Span,
+        money: ResolvedMoneyExpr,
+        rate: RateId,
+        span: Span,
+    },
     Debit { account: AccountId, value: ResolvedMoneyExpr, span: Span },
+    /// `absorb(residue, account);` — see D-028. `residue` is resolved the same way a
+    /// `Var` is (a name looked up in the flat per-transaction scope); which *kind* of
+    /// binding it names (a `Money` or a `Residue`) is checked by `typeck`.
+    Absorb { residue: SymbolId, residue_span: Span, account: AccountId, span: Span },
 }
 
 pub enum ResolvedMoneyExpr {
@@ -68,8 +106,8 @@ pub fn resolve(module: ast::Module) -> (Option<ResolvedModule>, Vec<Diagnostic>)
     let mut diags = Vec::new();
 
     let (currencies, currency_ids) = resolve_currencies(module.currencies, &mut diags);
-    let (accounts, account_ids) =
-        resolve_accounts(module.accounts, &currency_ids, &mut diags);
+    let (accounts, account_ids) = resolve_accounts(module.accounts, &currency_ids, &mut diags);
+    let (rates, rate_ids) = resolve_rates(module.rates, &currency_ids, &mut diags);
 
     let mut next_id = 0u32;
     let mut txns = Vec::new();
@@ -77,25 +115,62 @@ pub fn resolve(module: ast::Module) -> (Option<ResolvedModule>, Vec<Diagnostic>)
     for txn in module.txns {
         let mut scope: HashMap<String, SymbolId> = HashMap::new();
         let mut stmts = Vec::new();
+        let mut fresh_symbol = || {
+            let symbol = SymbolId(next_id);
+            next_id += 1;
+            symbol
+        };
 
         for stmt in txn.stmts {
             match stmt {
                 ast::Stmt::Let { name, name_span, value, span } => {
-                    let value =
-                        resolve_money_expr(value, &scope, &account_ids, &mut diags);
-                    let symbol = SymbolId(next_id);
-                    next_id += 1;
+                    let value = resolve_money_expr(value, &scope, &account_ids, &mut diags);
+                    let symbol = fresh_symbol();
                     scope.insert(name, symbol);
                     if let Some(value) = value {
                         stmts.push(ResolvedStmt::Let { symbol, name_span, value, span });
                     }
                 }
+                ast::Stmt::Convert {
+                    primary_name,
+                    primary_span,
+                    residual_name,
+                    residual_span,
+                    money,
+                    rate,
+                    rate_span,
+                    span,
+                } => {
+                    let money = resolve_money_expr(money, &scope, &account_ids, &mut diags);
+                    let rate_id = resolve_rate_ref(&rate, rate_span, &rate_ids, &mut diags);
+                    let primary = fresh_symbol();
+                    scope.insert(primary_name, primary);
+                    let residual = fresh_symbol();
+                    scope.insert(residual_name, residual);
+                    if let (Some(money), Some(rate)) = (money, rate_id) {
+                        stmts.push(ResolvedStmt::Convert {
+                            primary,
+                            primary_span,
+                            residual,
+                            residual_span,
+                            money,
+                            rate,
+                            span,
+                        });
+                    }
+                }
                 ast::Stmt::Debit { account, value, span } => {
-                    let value =
-                        resolve_money_expr(value, &scope, &account_ids, &mut diags);
+                    let value = resolve_money_expr(value, &scope, &account_ids, &mut diags);
                     let account = resolve_account_ref(&account, &account_ids, &mut diags);
                     if let (Some(account), Some(value)) = (account, value) {
                         stmts.push(ResolvedStmt::Debit { account, value, span });
+                    }
+                }
+                ast::Stmt::Absorb { residue_name, residue_span, account, span } => {
+                    let residue = resolve_var_ref(&residue_name, residue_span, &scope, &mut diags);
+                    let account = resolve_account_ref(&account, &account_ids, &mut diags);
+                    if let (Some(residue), Some(account)) = (residue, account) {
+                        stmts.push(ResolvedStmt::Absorb { residue, residue_span, account, span });
                     }
                 }
             }
@@ -105,7 +180,7 @@ pub fn resolve(module: ast::Module) -> (Option<ResolvedModule>, Vec<Diagnostic>)
     }
 
     if diags.is_empty() {
-        (Some(ResolvedModule { currencies, accounts, txns }), diags)
+        (Some(ResolvedModule { currencies, accounts, rates, txns }), diags)
     } else {
         (None, diags)
     }
@@ -175,6 +250,89 @@ fn resolve_accounts(
     (accounts, ids)
 }
 
+fn resolve_rates(
+    decls: Vec<ast::RateDecl>,
+    currency_ids: &HashMap<String, (CurrencyId, Span)>,
+    diags: &mut Vec<Diagnostic>,
+) -> (Vec<RateInfo>, HashMap<String, (RateId, Span)>) {
+    let mut rates = Vec::new();
+    let mut ids: HashMap<String, (RateId, Span)> = HashMap::new();
+
+    for decl in decls {
+        if let Some(&(_, first_span)) = ids.get(&decl.name) {
+            diags.push(
+                Diagnostic::new(
+                    Code::DuplicateRate,
+                    format!("rate '{}' is already declared", decl.name),
+                    decl.name_span,
+                )
+                .with_secondary("first declared here", first_span),
+            );
+            continue;
+        }
+        let Some(&(from, _)) = currency_ids.get(&decl.from) else {
+            diags.push(Diagnostic::new(
+                Code::UnknownCurrency,
+                format!("no currency named '{}' is declared", decl.from),
+                decl.from_span,
+            ));
+            continue;
+        };
+        let Some(&(to, _)) = currency_ids.get(&decl.to) else {
+            diags.push(Diagnostic::new(
+                Code::UnknownCurrency,
+                format!("no currency named '{}' is declared", decl.to),
+                decl.to_span,
+            ));
+            continue;
+        };
+        let (numerator, scale) = crate::amount::parse_fixed_point(&decl.value.text);
+        let id = RateId(rates.len() as u32);
+        ids.insert(decl.name.clone(), (id, decl.name_span));
+        rates.push(RateInfo { name: decl.name, from, to, numerator, scale });
+    }
+
+    (rates, ids)
+}
+
+fn resolve_rate_ref(
+    name: &str,
+    span: Span,
+    rate_ids: &HashMap<String, (RateId, Span)>,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<RateId> {
+    match rate_ids.get(name) {
+        Some(&(id, _)) => Some(id),
+        None => {
+            diags.push(Diagnostic::new(
+                Code::UndeclaredRate,
+                format!("no rate named '{name}' is declared"),
+                span,
+            ));
+            None
+        }
+    }
+}
+
+fn resolve_var_ref(
+    name: &str,
+    span: Span,
+    scope: &HashMap<String, SymbolId>,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<SymbolId> {
+    match scope.get(name) {
+        Some(&symbol) => Some(symbol),
+        None => {
+            diags.push(Diagnostic::new(
+                Code::UnboundName,
+                format!("no binding named '{name}' in scope"),
+                span,
+            ));
+            None
+        }
+    }
+}
+
 fn resolve_account_ref(
     account: &AccountPath,
     account_ids: &HashMap<String, (AccountId, Span)>,
@@ -204,17 +362,10 @@ fn resolve_money_expr(
             let account = resolve_account_ref(&account, account_ids, diags)?;
             Some(ResolvedMoneyExpr::Credit { account, amount, span })
         }
-        ast::MoneyExpr::Var { name, span } => match scope.get(&name) {
-            Some(&symbol) => Some(ResolvedMoneyExpr::Var { symbol, span }),
-            None => {
-                diags.push(Diagnostic::new(
-                    Code::UnboundName,
-                    format!("no binding named '{name}' in scope"),
-                    span,
-                ));
-                None
-            }
-        },
+        ast::MoneyExpr::Var { name, span } => {
+            let symbol = resolve_var_ref(&name, span, scope, diags)?;
+            Some(ResolvedMoneyExpr::Var { symbol, span })
+        }
     }
 }
 
@@ -324,5 +475,81 @@ mod tests {
         );
         assert!(module.is_none());
         assert_eq!(diags[0].code, Code::DuplicateAccount);
+    }
+
+    const FX_PRELUDE: &str = r#"
+        currency USD { scale = 2 }
+        currency ETB { scale = 2 }
+        account assets:usd_cash { currency = USD }
+        account assets:etb_cash { currency = ETB }
+        account income:fx_rounding { currency = ETB }
+        rate usd_etb from USD to ETB = 57.20 round down;
+    "#;
+
+    #[test]
+    fn resolves_convert_and_absorb() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{FX_PRELUDE} txn "fx" {{
+                let m = credit(assets:usd_cash, 100.00);
+                let (m2, r) = convert(m, usd_etb);
+                debit(assets:etb_cash, m2);
+                absorb(r, income:fx_rounding);
+            }}"#
+        ));
+        assert!(diags.is_empty(), "{diags:?}");
+        let module = module.unwrap();
+        assert_eq!(module.rates.len(), 1);
+        let stmts = &module.txns[0].stmts;
+        let ResolvedStmt::Convert { primary, residual, .. } = &stmts[1] else {
+            panic!("expected a convert statement");
+        };
+        let ResolvedStmt::Debit { value: ResolvedMoneyExpr::Var { symbol: debited, .. }, .. } =
+            &stmts[2]
+        else {
+            panic!("expected a debit of a variable");
+        };
+        assert_eq!(primary, debited);
+        let ResolvedStmt::Absorb { residue, .. } = &stmts[3] else {
+            panic!("expected an absorb statement");
+        };
+        assert_eq!(residual, residue);
+    }
+
+    #[test]
+    fn undeclared_rate_is_reported() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{FX_PRELUDE} txn "fx" {{
+                let m = credit(assets:usd_cash, 100.00);
+                let (m2, r) = convert(m, nonexistent_rate);
+                debit(assets:etb_cash, m2);
+                absorb(r, income:fx_rounding);
+            }}"#
+        ));
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::UndeclaredRate);
+    }
+
+    #[test]
+    fn duplicate_rate_is_reported() {
+        let (module, diags) = resolve_src(
+            r#"currency USD { scale = 2 }
+               currency ETB { scale = 2 }
+               rate usd_etb from USD to ETB = 57.20 round down;
+               rate usd_etb from USD to ETB = 58.00 round down;
+               txn "t" { }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::DuplicateRate);
+    }
+
+    #[test]
+    fn rate_naming_unknown_currency_is_reported() {
+        let (module, diags) = resolve_src(
+            r#"currency USD { scale = 2 }
+               rate usd_etb from USD to ETB = 57.20 round down;
+               txn "t" { }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::UnknownCurrency);
     }
 }
