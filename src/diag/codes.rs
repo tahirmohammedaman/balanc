@@ -27,8 +27,20 @@ pub enum Code {
     /// — scale is a per-currency property starting Slice 2, not a language constant.
     TooManyFractionDigits,
     /// A `debit`'s money value and its target account have different currencies
-    /// (Slice 2, T-Debit's `acct : Account<C>` premise).
+    /// (Slice 2, T-Debit's `acct : Account<C>` premise); also raised when `convert`'s
+    /// input doesn't match its rate's `from` currency, or `absorb`'s residue doesn't
+    /// match its target account's currency (Slice 3).
     CurrencyMismatch,
+    /// A `convert`/`absorb` names a rate with no matching `rate` declaration.
+    UndeclaredRate,
+    /// Two `rate` declarations use the same name.
+    DuplicateRate,
+    /// A `debit` (or `convert`'s money argument) names a `Var` that resolved to a
+    /// `Residue`, not `Money` — use `absorb`, not `debit`, to discharge a residue.
+    ExpectedMoney,
+    /// An `absorb` names a `Var` that resolved to `Money`, not a `Residue` — use
+    /// `debit`, not `absorb`, to discharge ordinary money.
+    ExpectedResidue,
     /// A `let`-bound `Money` value is never consumed by a `debit` — Δ is non-empty at
     /// the end of the transaction body (invariant 1).
     Dropped,
@@ -54,6 +66,10 @@ impl Code {
             Code::UndeclaredAccount => "E_UNDECLARED_ACCOUNT",
             Code::TooManyFractionDigits => "E_TOO_MANY_FRACTION_DIGITS",
             Code::CurrencyMismatch => "E_CURRENCY_MISMATCH",
+            Code::UndeclaredRate => "E_UNDECLARED_RATE",
+            Code::DuplicateRate => "E_DUPLICATE_RATE",
+            Code::ExpectedMoney => "E_EXPECTED_MONEY",
+            Code::ExpectedResidue => "E_EXPECTED_RESIDUE",
             Code::Dropped => "E_DROPPED",
             Code::Reused => "E_REUSED",
             Code::Unbalanced => "E_UNBALANCED",

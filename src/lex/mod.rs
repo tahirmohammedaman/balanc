@@ -21,10 +21,16 @@ pub enum TokenKind {
     KwCurrency,
     KwAccount,
     KwScale,
+    KwRate,
+    KwFrom,
+    KwTo,
+    KwRound,
+    KwDown,
+    KwConvert,
+    KwAbsorb,
     Ident(String),
-    /// Raw literal text, e.g. `"45"` or `"45.00"`; lowering to `Amount` happens in the
-    /// parser, which is where a per-syntax-position error (e.g. wrong arg count)
-    /// would also be reported.
+    /// Raw literal text, e.g. `"45"` or `"45.00"`; lowering to `Amount` happens in
+    /// `typeck` (D-024), once the literal's currency (and hence scale) is known.
     Decimal(String),
     /// Contents of a string literal, with surrounding quotes stripped.
     Str(String),
@@ -158,6 +164,13 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                     "currency" => TokenKind::KwCurrency,
                     "account" => TokenKind::KwAccount,
                     "scale" => TokenKind::KwScale,
+                    "rate" => TokenKind::KwRate,
+                    "from" => TokenKind::KwFrom,
+                    "to" => TokenKind::KwTo,
+                    "round" => TokenKind::KwRound,
+                    "down" => TokenKind::KwDown,
+                    "convert" => TokenKind::KwConvert,
+                    "absorb" => TokenKind::KwAbsorb,
                     _ => TokenKind::Ident(text.to_string()),
                 };
                 tokens.push(tok(kind, start, pos));
@@ -208,7 +221,9 @@ mod tests {
 
     #[test]
     fn keywords_recognized() {
-        let (tokens, _) = lex("txn let debit credit currency account scale");
+        let (tokens, _) = lex(
+            "txn let debit credit currency account scale rate from to round down convert absorb",
+        );
         let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -220,6 +235,13 @@ mod tests {
                 TokenKind::KwCurrency,
                 TokenKind::KwAccount,
                 TokenKind::KwScale,
+                TokenKind::KwRate,
+                TokenKind::KwFrom,
+                TokenKind::KwTo,
+                TokenKind::KwRound,
+                TokenKind::KwDown,
+                TokenKind::KwConvert,
+                TokenKind::KwAbsorb,
                 TokenKind::Eof
             ]
         );
