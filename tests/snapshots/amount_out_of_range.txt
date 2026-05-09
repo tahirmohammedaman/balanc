@@ -1,0 +1,1 @@
+amount_out_of_range.bal:7:46: error[E_AMOUNT_OUT_OF_RANGE]: this amount is too large to represent

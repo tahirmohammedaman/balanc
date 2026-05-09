@@ -74,6 +74,11 @@ fn too_many_fraction_digits_reports_the_currency_and_scale() {
 }
 
 #[test]
+fn amount_out_of_range_reports_e_amount_out_of_range() {
+    run_case("amount_out_of_range");
+}
+
+#[test]
 fn convert_and_absorb_round_trip_cleanly() {
     run_case("convert_and_absorb");
 }
