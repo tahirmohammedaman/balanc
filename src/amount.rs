@@ -13,6 +13,19 @@ use std::ops::{Add, Neg, Sub};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Amount(i64);
 
+/// Why a decimal literal couldn't be lowered into an `Amount` (Fix checkpoint B: found
+/// by fuzzing with an oversized literal, which overflowed `i64` instead of producing a
+/// diagnostic).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiteralError {
+    /// The literal has more fraction digits than the currency's scale allows; carries
+    /// the actual count.
+    TooManyFractionDigits(u32),
+    /// The literal's magnitude (or its magnitude once scaled to the currency's minor
+    /// unit) doesn't fit an `i64`.
+    OutOfRange,
+}
+
 impl Amount {
     pub const ZERO: Amount = Amount(0);
 
@@ -30,15 +43,16 @@ impl Amount {
 
     /// Lowers a decimal literal's raw text — lexer-validated as digits, at most one
     /// `.`, and at least one fraction digit if a `.` is present — into `scale`'s minor
-    /// unit. `Err(n)` reports the literal's actual fraction-digit count `n` when it
-    /// exceeds `scale`; the caller (`typeck`) names the currency and its scale in the
-    /// diagnostic, since this module doesn't know either (D-024).
-    pub fn from_literal(text: &str, scale: u32) -> Result<Amount, u32> {
-        let (numerator, frac_digits) = parse_fixed_point(text);
+    /// unit. The caller (`typeck`) names the currency and its scale in the diagnostic
+    /// for `TooManyFractionDigits`, since this module doesn't know either (D-024).
+    pub fn from_literal(text: &str, scale: u32) -> Result<Amount, LiteralError> {
+        let (numerator, frac_digits) =
+            parse_fixed_point(text).ok_or(LiteralError::OutOfRange)?;
         if frac_digits > scale {
-            return Err(frac_digits);
+            return Err(LiteralError::TooManyFractionDigits(frac_digits));
         }
-        Ok(Amount(numerator * 10i64.pow(scale - frac_digits)))
+        let scale_factor = 10i64.checked_pow(scale - frac_digits).ok_or(LiteralError::OutOfRange)?;
+        numerator.checked_mul(scale_factor).map(Amount).ok_or(LiteralError::OutOfRange)
     }
 
     /// Renders this amount at `scale` fraction digits (e.g. `scale = 2` -> `"45.00"`,
@@ -89,16 +103,23 @@ impl Neg for Amount {
 }
 
 /// Splits a lexer-validated decimal literal's raw text into a single integer
-/// numerator and its fraction-digit count, e.g. `"57.20"` -> `(5720, 2)`. Shared by
+/// numerator and its fraction-digit count, e.g. `"57.20"` -> `Ok((5720, 2))`. Shared by
 /// `Amount::from_literal` (which then needs a currency's scale to finish lowering)
 /// and a `rate`'s own literal (`resolve::resolve_rates`, Slice 3), which has no scale
 /// to validate against — a rate's precision is whatever the author wrote.
-pub fn parse_fixed_point(text: &str) -> (i64, u32) {
+///
+/// `None` means the literal's magnitude doesn't fit an `i64`. The lexer only validates
+/// a literal's *shape* (digits, at most one `.`) — nothing bounds how many digits a
+/// user can type, so a literal with enough digits genuinely overflows this module's
+/// fixed-point representation. Every caller must handle this as an ordinary diagnostic
+/// (`E_AMOUNT_OUT_OF_RANGE`), not treat it as unreachable.
+pub fn parse_fixed_point(text: &str) -> Option<(i64, u32)> {
     let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
     let frac_digits = frac.len() as u32;
-    let whole: i64 = whole.parse().expect("internal error: lexer produced a malformed decimal");
-    let frac_value: i64 = if frac.is_empty() { 0 } else { frac.parse().unwrap() };
-    (whole * 10i64.pow(frac_digits) + frac_value, frac_digits)
+    let whole: i64 = whole.parse().ok()?;
+    let frac_value: i64 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
+    let scaled_whole = whole.checked_mul(10i64.checked_pow(frac_digits)?)?;
+    Some((scaled_whole.checked_add(frac_value)?, frac_digits))
 }
 
 #[cfg(test)]
@@ -142,13 +163,33 @@ mod tests {
 
     #[test]
     fn from_literal_rejects_too_many_fraction_digits() {
-        assert_eq!(Amount::from_literal("45.123", 2), Err(3));
+        assert_eq!(Amount::from_literal("45.123", 2), Err(LiteralError::TooManyFractionDigits(3)));
     }
 
     #[test]
     fn parse_fixed_point_splits_numerator_and_frac_digits() {
-        assert_eq!(parse_fixed_point("57.20"), (5720, 2));
-        assert_eq!(parse_fixed_point("45"), (45, 0));
-        assert_eq!(parse_fixed_point("0.001"), (1, 3));
+        assert_eq!(parse_fixed_point("57.20"), Some((5720, 2)));
+        assert_eq!(parse_fixed_point("45"), Some((45, 0)));
+        assert_eq!(parse_fixed_point("0.001"), Some((1, 3)));
+    }
+
+    #[test]
+    fn parse_fixed_point_rejects_a_literal_too_large_for_i64() {
+        // Fix checkpoint B: fuzzing found this panicking via `.expect()`/`.unwrap()`
+        // instead of reporting a diagnostic (a 100k-digit literal is lexer-valid shape,
+        // but no magnitude fits `i64`).
+        assert_eq!(parse_fixed_point(&"9".repeat(100)), None);
+    }
+
+    #[test]
+    fn from_literal_rejects_an_amount_too_large_for_i64() {
+        assert_eq!(Amount::from_literal(&"9".repeat(30), 2), Err(LiteralError::OutOfRange));
+    }
+
+    #[test]
+    fn from_literal_rejects_a_scale_so_large_it_overflows_i64() {
+        // A literal that's fine on its own can still overflow once scaled up to an
+        // absurdly large currency scale.
+        assert_eq!(Amount::from_literal("1", 30), Err(LiteralError::OutOfRange));
     }
 }

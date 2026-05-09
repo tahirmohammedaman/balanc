@@ -286,7 +286,14 @@ fn resolve_rates(
             ));
             continue;
         };
-        let (numerator, scale) = crate::amount::parse_fixed_point(&decl.value.text);
+        let Some((numerator, scale)) = crate::amount::parse_fixed_point(&decl.value.text) else {
+            diags.push(Diagnostic::new(
+                Code::AmountOutOfRange,
+                "this rate is too large to represent",
+                decl.value.span,
+            ));
+            continue;
+        };
         let id = RateId(rates.len() as u32);
         ids.insert(decl.name.clone(), (id, decl.name_span));
         rates.push(RateInfo { name: decl.name, from, to, numerator, scale });

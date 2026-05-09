@@ -26,6 +26,11 @@ pub enum Code {
     /// allows. Checked at `typeck` time (D-024), once the literal's currency is known
     /// — scale is a per-currency property starting Slice 2, not a language constant.
     TooManyFractionDigits,
+    /// A decimal literal (an amount, a rate value, or a currency's scale applied to
+    /// one) is too large in magnitude for the fixed-point `i64` representation this
+    /// language is built on — lexer-validated digit *shape* says nothing about
+    /// magnitude, so this is checked where the literal is lowered, not at lex time.
+    AmountOutOfRange,
     /// A `debit`'s money value and its target account have different currencies
     /// (Slice 2, T-Debit's `acct : Account<C>` premise); also raised when `convert`'s
     /// input doesn't match its rate's `from` currency, or `absorb`'s residue doesn't
@@ -65,6 +70,7 @@ impl Code {
             Code::DuplicateAccount => "E_DUPLICATE_ACCOUNT",
             Code::UndeclaredAccount => "E_UNDECLARED_ACCOUNT",
             Code::TooManyFractionDigits => "E_TOO_MANY_FRACTION_DIGITS",
+            Code::AmountOutOfRange => "E_AMOUNT_OUT_OF_RANGE",
             Code::CurrencyMismatch => "E_CURRENCY_MISMATCH",
             Code::UndeclaredRate => "E_UNDECLARED_RATE",
             Code::DuplicateRate => "E_DUPLICATE_RATE",

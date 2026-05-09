@@ -194,13 +194,21 @@ fn typeck_money_expr(
             let scale = currencies[currency.0 as usize].scale;
             let amount = match Amount::from_literal(&amount.text, scale) {
                 Ok(amount) => amount,
-                Err(frac_digits) => {
+                Err(crate::amount::LiteralError::TooManyFractionDigits(frac_digits)) => {
                     diags.push(Diagnostic::new(
                         Code::TooManyFractionDigits,
                         format!(
                             "amount has {frac_digits} fractional digits, but currency '{}' has scale {scale}",
                             currencies[currency.0 as usize].name
                         ),
+                        amount.span,
+                    ));
+                    return None;
+                }
+                Err(crate::amount::LiteralError::OutOfRange) => {
+                    diags.push(Diagnostic::new(
+                        Code::AmountOutOfRange,
+                        "this amount is too large to represent",
                         amount.span,
                     ));
                     return None;
@@ -363,6 +371,22 @@ mod tests {
         assert!(module.is_none());
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, Code::TooManyFractionDigits);
+    }
+
+    #[test]
+    fn amount_too_large_to_represent_is_reported() {
+        // Fix checkpoint B: fuzzing found this panicking instead of producing a
+        // diagnostic (a lexer-valid literal's magnitude can still overflow `i64`).
+        let (module, diags) = typeck_src_no_prelude(&format!(
+            r#"currency JPY {{ scale = 0 }}
+               account assets:cash {{ currency = JPY }}
+               account expenses:coffee {{ currency = JPY }}
+               txn "t" {{ debit(expenses:coffee, credit(assets:cash, {})); }}"#,
+            "9".repeat(30)
+        ));
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::AmountOutOfRange);
     }
 
     fn fx_src(src: &str) -> (Option<TModule>, Vec<Diagnostic>) {
