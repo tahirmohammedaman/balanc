@@ -21,10 +21,46 @@
 //! (T-Absorb)  ──────────────────────────────────────────
 //!             Γ ⊢ absorb(x, acct) : Effect     consumes x
 //!
+//!             Γ ⊢ e : Money<C>     n : Amount
+//! (T-Split)   ─────────────────────────────────────────────────────
+//!             Γ ⊢ let (a, b) = split(e, n) : Money<C> ⊗ Money<C>
+//!                 consumes e; binds a : Money<C> (= n), b : Money<C> (= amount(e) - n)
+//!                 side condition: 0 ≤ n ≤ amount(e) — unlike every premise above,
+//!                 `amount(e)` is a runtime quantity, not something `typeck` can see
+//!                 (Slice 0's boundary: types track currency and linearity, never
+//!                 magnitude), so this is checked in `eval`, not here (D-034). A
+//!                 violation is `E_UNBALANCED`: handing out more than `e` holds would
+//!                 manufacture money from nothing, exactly what invariant 3 forbids.
+//!
+//!             Γ ⊢ e : Money<C>     p, q : Nat     p + q > 0
+//! (T-SplitRatio) ───────────────────────────────────────────────────────
+//!             Γ ⊢ let (a, b) = split_ratio(e, p, q) : Money<C> ⊗ Money<C>
+//!                 consumes e; binds a, b to a largest-remainder allocation of
+//!                 amount(e) in ratio p : q (D-015), ties broken toward a. Exact by
+//!                 construction (a + b always sums to amount(e)) — no side condition,
+//!                 unlike T-Split, other than the literal-checkable p + q > 0.
+//!
+//!             Γ ⊢ a : Money<C>     Γ ⊢ b : Money<C>
+//! (T-Merge)   ─────────────────────────────────────────
+//!             Γ ⊢ merge(a, b) : Money<C>     consumes a, then b, from the same Γ
+//!                 (Γ₁ ⊎ Γ₂'s disjointness requirement falls out for free this way:
+//!                 consuming `a` then `b` in sequence from one Γ already rejects
+//!                 `merge(m, m)` as an ordinary second consumption — E_REUSED, no new
+//!                 mechanism needed)
+//!
 //!             Γ ⊢ body ⇒ Δ        Δ = ∅
 //! (T-Txn)     ─────────────────────────────
 //!             ⊢ txn { body } : Txn
 //! ```
+//!
+//! `merge` is `MoneyExpr`, not a statement (unlike `split`/`split_ratio`, which — like
+//! `convert` — produce a pair and so need `let (a, b) = ...`'s two binding sites):
+//! `merge(a, b)` yields a single `Money`, so it fits the same grammar slot as `credit`
+//! or a bare variable, usable as a `let`'s right-hand side or inline in `debit`. This
+//! is also the first place `MoneyExpr` actually nests (`merge`'s own arguments are
+//! `MoneyExpr`s, so `merge(credit(...), merge(...))` parses) — Fix checkpoint B found
+//! no recursive production to cap because none existed yet; `parse::Parser` now caps
+//! nesting depth with `E_EXPR_TOO_DEEP` now that one does.
 //!
 //! `Δ = ∅` is invariant 1 (linear use); `Context::finish_txn` below is what checks it,
 //! reporting every still-live binding — `Money` or `Residue` alike — as `E_DROPPED`.
@@ -41,8 +77,11 @@
 //! to zero within a transaction — which is correct once conversion exists, not a
 //! regression. `Δ = ∅` still guarantees nothing is dropped; it just no longer implies
 //! each currency balances independently. An explicit cross-currency computed check
-//! (base-currency triangulation) is out of scope through Slice 3; `Code::Unbalanced`
-//! (in `src/diag/codes.rs`) stays reserved, still unreachable.
+//! (base-currency triangulation) is out of scope. `split` (Slice 4, D-034) is where
+//! `Code::Unbalanced` stops being reserved: `Δ = ∅` still guarantees every value is
+//! consumed exactly once, but it says nothing about the *magnitude* `split` hands out
+//! for each half, so that specific arithmetic side condition needs a real, computed
+//! check for the first time — see T-Split above.
 //!
 //! The `acct : Account<C>` premise is checked (Slice 2, D-022): every `credit`,
 //! `debit`, and (Slice 3) `absorb` names a declared account, resolved to an

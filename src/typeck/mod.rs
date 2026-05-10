@@ -4,8 +4,9 @@
 
 pub mod rules;
 
-use crate::amount::Amount;
+use crate::amount::{Amount, LiteralError};
 use crate::diag::{Code, Diagnostic};
+use crate::parse::ast::DecimalLiteral;
 use crate::resolve::{
     AccountId, AccountInfo, CurrencyId, CurrencyInfo, RateId, RateInfo, ResolvedModule,
     ResolvedMoneyExpr, ResolvedStmt, ResolvedTxn, SymbolId,
@@ -37,11 +38,29 @@ pub enum TStmt {
     Debit { account: AccountId, value: TMoneyExpr, span: Span },
     /// `absorb(residual, account);` (D-028).
     Absorb { residual: SymbolId, account: AccountId, span: Span },
+    /// `let (a, b) = split(money, amount);` (D-034). `amount` is already lowered (it
+    /// only needed `money`'s currency's scale, known once `money` typechecks) but
+    /// whether it actually fits inside `money`'s runtime value can't be checked here
+    /// — that's `eval`'s job, `amount_span` is what its diagnostic points at.
+    Split {
+        a: SymbolId,
+        b: SymbolId,
+        money: TMoneyExpr,
+        currency: CurrencyId,
+        amount: Amount,
+        amount_span: Span,
+        span: Span,
+    },
+    /// `let (a, b) = split_ratio(money, a_weight, b_weight);` (D-015/D-035). Always
+    /// exact (T-SplitRatio) — no runtime side condition, unlike `Split`.
+    SplitRatio { a: SymbolId, b: SymbolId, money: TMoneyExpr, a_weight: u32, b_weight: u32, span: Span },
 }
 
 pub enum TMoneyExpr {
     Credit { account: AccountId, amount: Amount },
     Var { symbol: SymbolId },
+    /// `merge(a, b)` (T-Merge).
+    Merge { a: Box<TMoneyExpr>, b: Box<TMoneyExpr> },
 }
 
 pub fn typeck(module: ResolvedModule) -> (Option<TModule>, Vec<Diagnostic>) {
@@ -128,6 +147,54 @@ fn typeck_txn(
                 }
                 Some(TStmt::Absorb { residual: residue, account, span })
             }
+            ResolvedStmt::Split { a, a_span, b, b_span, money, amount, span } => {
+                let (money, money_currency, currency_span) =
+                    typeck_money_expr(money, accounts, currencies, &mut ctx, diags)?;
+                let scale = currencies[money_currency.0 as usize].scale;
+                let lowered_amount = lower_amount(
+                    &amount,
+                    scale,
+                    &currencies[money_currency.0 as usize].name,
+                    diags,
+                )?;
+                ctx.bind(a, a_span, currency_span, money_currency, BindingKind::Money);
+                ctx.bind(b, b_span, currency_span, money_currency, BindingKind::Money);
+                Some(TStmt::Split {
+                    a,
+                    b,
+                    money,
+                    currency: money_currency,
+                    amount: lowered_amount,
+                    amount_span: amount.span,
+                    span,
+                })
+            }
+            ResolvedStmt::SplitRatio {
+                a,
+                a_span,
+                b,
+                b_span,
+                money,
+                a_weight,
+                a_weight_span,
+                b_weight,
+                b_weight_span,
+                span,
+            } => {
+                let (money, money_currency, currency_span) =
+                    typeck_money_expr(money, accounts, currencies, &mut ctx, diags)?;
+                if a_weight == 0 && b_weight == 0 {
+                    diags.push(Diagnostic::new(
+                        Code::ZeroRatio,
+                        "split_ratio's weights are both zero, which doesn't determine an allocation",
+                        a_weight_span.to(b_weight_span),
+                    ));
+                    return None;
+                }
+                ctx.bind(a, a_span, currency_span, money_currency, BindingKind::Money);
+                ctx.bind(b, b_span, currency_span, money_currency, BindingKind::Money);
+                Some(TStmt::SplitRatio { a, b, money, a_weight, b_weight, span })
+            }
         })
         .collect();
     diags.extend(ctx.finish_txn());
@@ -192,28 +259,8 @@ fn typeck_money_expr(
             let info = &accounts[account.0 as usize];
             let currency = info.currency;
             let scale = currencies[currency.0 as usize].scale;
-            let amount = match Amount::from_literal(&amount.text, scale) {
-                Ok(amount) => amount,
-                Err(crate::amount::LiteralError::TooManyFractionDigits(frac_digits)) => {
-                    diags.push(Diagnostic::new(
-                        Code::TooManyFractionDigits,
-                        format!(
-                            "amount has {frac_digits} fractional digits, but currency '{}' has scale {scale}",
-                            currencies[currency.0 as usize].name
-                        ),
-                        amount.span,
-                    ));
-                    return None;
-                }
-                Err(crate::amount::LiteralError::OutOfRange) => {
-                    diags.push(Diagnostic::new(
-                        Code::AmountOutOfRange,
-                        "this amount is too large to represent",
-                        amount.span,
-                    ));
-                    return None;
-                }
-            };
+            let amount =
+                lower_amount(&amount, scale, &currencies[currency.0 as usize].name, diags)?;
             Some((TMoneyExpr::Credit { account, amount }, currency, span))
         }
         ResolvedMoneyExpr::Var { symbol, span } => {
@@ -221,7 +268,76 @@ fn typeck_money_expr(
                 consume_checked(symbol, span, BindingKind::Money, ctx, diags)?;
             Some((TMoneyExpr::Var { symbol }, currency, currency_span))
         }
+        ResolvedMoneyExpr::Merge { a, b, span } => {
+            // Typecheck both sides unconditionally (not `a?` then `b`), matching
+            // `resolve`'s handling of the same node, so a problem on one side doesn't
+            // hide a diagnostic on the other.
+            let a_result = typeck_money_expr(*a, accounts, currencies, ctx, diags);
+            let b_result = typeck_money_expr(*b, accounts, currencies, ctx, diags);
+            let (a_expr, a_currency, a_span) = a_result?;
+            let (b_expr, b_currency, b_span) = b_result?;
+            if a_currency != b_currency {
+                diags.push(merge_currency_mismatch(
+                    currencies, a_currency, a_span, b_currency, b_span, span,
+                ));
+                return None;
+            }
+            Some((TMoneyExpr::Merge { a: Box::new(a_expr), b: Box::new(b_expr) }, a_currency, span))
+        }
     }
+}
+
+/// Lowers a decimal literal into an `Amount` at `scale`, reporting
+/// `TooManyFractionDigits`/`AmountOutOfRange` on failure (D-024, D-031). Shared by
+/// `credit`'s amount (`typeck_money_expr`) and `split`'s (T-Split) — both are a raw
+/// literal that only needs a currency's scale to lower, known once the money value
+/// it's paired with has typechecked.
+fn lower_amount(
+    literal: &DecimalLiteral,
+    scale: u32,
+    currency_name: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Amount> {
+    match Amount::from_literal(&literal.text, scale) {
+        Ok(amount) => Some(amount),
+        Err(LiteralError::TooManyFractionDigits(frac_digits)) => {
+            diags.push(Diagnostic::new(
+                Code::TooManyFractionDigits,
+                format!(
+                    "amount has {frac_digits} fractional digits, but currency '{currency_name}' has scale {scale}"
+                ),
+                literal.span,
+            ));
+            None
+        }
+        Err(LiteralError::OutOfRange) => {
+            diags.push(Diagnostic::new(
+                Code::AmountOutOfRange,
+                "this amount is too large to represent",
+                literal.span,
+            ));
+            None
+        }
+    }
+}
+
+fn merge_currency_mismatch(
+    currencies: &[CurrencyInfo],
+    a_currency: CurrencyId,
+    a_span: Span,
+    b_currency: CurrencyId,
+    b_span: Span,
+    merge_span: Span,
+) -> Diagnostic {
+    let a_name = &currencies[a_currency.0 as usize].name;
+    let b_name = &currencies[b_currency.0 as usize].name;
+    Diagnostic::new(
+        Code::CurrencyMismatch,
+        format!("merge's two values have different currencies: '{a_name}' and '{b_name}'"),
+        merge_span,
+    )
+    .with_secondary("this value's currency was established here", a_span)
+    .with_secondary("this value's currency was established here", b_span)
 }
 
 fn currency_mismatch(
@@ -464,5 +580,102 @@ mod tests {
         assert!(module.is_none());
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, Code::ExpectedResidue);
+    }
+
+    #[test]
+    fn well_formed_split_typechecks() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split(m, 20.00);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }"#,
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(module.is_some());
+    }
+
+    #[test]
+    fn dropping_one_half_of_a_split_is_reported() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split(m, 20.00);
+                debit(expenses:a, a);
+            }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::Dropped);
+    }
+
+    #[test]
+    fn well_formed_split_ratio_typechecks() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split_ratio(m, 1, 2);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }"#,
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(module.is_some());
+    }
+
+    #[test]
+    fn split_ratio_with_both_weights_zero_is_reported() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split_ratio(m, 0, 0);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::ZeroRatio);
+    }
+
+    #[test]
+    fn well_formed_merge_typechecks() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let a = credit(assets:cash, 20.00);
+                let b = credit(assets:cash, 25.00);
+                debit(expenses:coffee, merge(a, b));
+            }"#,
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(module.is_some());
+    }
+
+    #[test]
+    fn merging_a_value_with_itself_is_reported_as_reused() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let m = credit(assets:cash, 20.00);
+                debit(expenses:coffee, merge(m, m));
+            }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::Reused);
+    }
+
+    #[test]
+    fn merging_different_currencies_is_reported() {
+        let (module, diags) = typeck_src(
+            r#"txn "t" {
+                let a = credit(assets:cash, 20.00);
+                let b = credit(assets:usd_cash, 20.00);
+                debit(expenses:coffee, merge(a, b));
+            }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::CurrencyMismatch);
     }
 }
