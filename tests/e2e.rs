@@ -102,3 +102,28 @@ fn debiting_a_residue_reports_e_expected_money() {
 fn absorbing_money_reports_e_expected_residue() {
     run_case("expected_residue_found_money");
 }
+
+#[test]
+fn split_and_merge_round_trip_cleanly() {
+    run_case("split_and_merge");
+}
+
+#[test]
+fn merging_a_value_with_itself_reports_e_reused() {
+    run_case("merge_reused");
+}
+
+#[test]
+fn dropping_one_half_of_a_split_reports_e_dropped() {
+    run_case("dropped_split_half");
+}
+
+#[test]
+fn splitting_more_than_available_reports_e_unbalanced() {
+    run_case("split_unbalanced");
+}
+
+#[test]
+fn split_ratio_with_zero_weights_reports_e_zero_ratio() {
+    run_case("zero_ratio");
+}

@@ -1,0 +1,1 @@
+split_unbalanced.bal:9:25: error[E_UNBALANCED]: cannot split off 250.00 — only 100.00 is available

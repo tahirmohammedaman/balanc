@@ -1,0 +1,1 @@
+zero_ratio.bal:9:31: error[E_ZERO_RATIO]: split_ratio's weights are both zero, which doesn't determine an allocation

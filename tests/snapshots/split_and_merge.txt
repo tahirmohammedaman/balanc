@@ -1,0 +1,5 @@
+Trial Balance (ETB)
+  assets:cash                   -300.00
+  expenses:rent                  200.00
+  expenses:utilities             100.00
+  Total                            0.00

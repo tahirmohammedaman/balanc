@@ -1,0 +1,2 @@
+merge_reused.bal:8:35: error[E_REUSED]: this value has already been consumed
+merge_reused.bal:8:32: note: first consumed here
