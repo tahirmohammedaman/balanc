@@ -95,11 +95,45 @@ pub enum ResolvedStmt {
     /// `Var` is (a name looked up in the flat per-transaction scope); which *kind* of
     /// binding it names (a `Money` or a `Residue`) is checked by `typeck`.
     Absorb { residue: SymbolId, residue_span: Span, account: AccountId, span: Span },
+    /// `let (a, b) = split(money, amount);` — see D-034. `amount` stays a raw literal
+    /// for the same reason `credit`'s does (D-024): lowering it needs a scale, only
+    /// known once `money`'s currency is known, which `typeck` determines.
+    Split {
+        a: SymbolId,
+        a_span: Span,
+        b: SymbolId,
+        b_span: Span,
+        money: ResolvedMoneyExpr,
+        amount: DecimalLiteral,
+        span: Span,
+    },
+    /// `let (a, b) = split_ratio(money, a_weight, b_weight);` — see D-015/D-035. The
+    /// weights are already whole numbers straight from the parser (D-035), so unlike
+    /// `amount` above there's no currency-scale lowering step to defer.
+    SplitRatio {
+        a: SymbolId,
+        a_span: Span,
+        b: SymbolId,
+        b_span: Span,
+        money: ResolvedMoneyExpr,
+        a_weight: u32,
+        a_weight_span: Span,
+        b_weight: u32,
+        b_weight_span: Span,
+        span: Span,
+    },
 }
 
 pub enum ResolvedMoneyExpr {
     Credit { account: AccountId, amount: DecimalLiteral, span: Span },
     Var { symbol: SymbolId, span: Span },
+    /// `merge(a, b)` — see T-Merge. Resolving `a` then `b` in sequence (rather than,
+    /// say, resolving both against independent copies of `scope`) is what's needed
+    /// for `typeck`'s later `merge(m, m)` -> `E_REUSED` check to work at all — but
+    /// that check only concerns *linear consumption*, which resolve doesn't track;
+    /// resolve just needs both sub-expressions' names to exist in scope, same as any
+    /// other `MoneyExpr` position.
+    Merge { a: Box<ResolvedMoneyExpr>, b: Box<ResolvedMoneyExpr>, span: Span },
 }
 
 pub fn resolve(module: ast::Module) -> (Option<ResolvedModule>, Vec<Diagnostic>) {
@@ -171,6 +205,56 @@ pub fn resolve(module: ast::Module) -> (Option<ResolvedModule>, Vec<Diagnostic>)
                     let account = resolve_account_ref(&account, &account_ids, &mut diags);
                     if let (Some(residue), Some(account)) = (residue, account) {
                         stmts.push(ResolvedStmt::Absorb { residue, residue_span, account, span });
+                    }
+                }
+                ast::Stmt::Split { a_name, a_span, b_name, b_span, money, amount, span } => {
+                    let money = resolve_money_expr(money, &scope, &account_ids, &mut diags);
+                    let a = fresh_symbol();
+                    scope.insert(a_name, a);
+                    let b = fresh_symbol();
+                    scope.insert(b_name, b);
+                    if let Some(money) = money {
+                        stmts.push(ResolvedStmt::Split {
+                            a,
+                            a_span,
+                            b,
+                            b_span,
+                            money,
+                            amount,
+                            span,
+                        });
+                    }
+                }
+                ast::Stmt::SplitRatio {
+                    a_name,
+                    a_span,
+                    b_name,
+                    b_span,
+                    money,
+                    a_weight,
+                    a_weight_span,
+                    b_weight,
+                    b_weight_span,
+                    span,
+                } => {
+                    let money = resolve_money_expr(money, &scope, &account_ids, &mut diags);
+                    let a = fresh_symbol();
+                    scope.insert(a_name, a);
+                    let b = fresh_symbol();
+                    scope.insert(b_name, b);
+                    if let Some(money) = money {
+                        stmts.push(ResolvedStmt::SplitRatio {
+                            a,
+                            a_span,
+                            b,
+                            b_span,
+                            money,
+                            a_weight,
+                            a_weight_span,
+                            b_weight,
+                            b_weight_span,
+                            span,
+                        });
                     }
                 }
             }
@@ -373,6 +457,19 @@ fn resolve_money_expr(
             let symbol = resolve_var_ref(&name, span, scope, diags)?;
             Some(ResolvedMoneyExpr::Var { symbol, span })
         }
+        ast::MoneyExpr::Merge { a, b, span } => {
+            // Resolve both sides unconditionally (not `a?` then `b`) so an unresolved
+            // name on one side doesn't hide diagnostics from the other, matching every
+            // other two-sided statement in this module (e.g. `Debit`'s account/value).
+            let a = resolve_money_expr(*a, scope, account_ids, diags);
+            let b = resolve_money_expr(*b, scope, account_ids, diags);
+            match (a, b) {
+                (Some(a), Some(b)) => {
+                    Some(ResolvedMoneyExpr::Merge { a: Box::new(a), b: Box::new(b), span })
+                }
+                _ => None,
+            }
+        }
     }
 }
 
@@ -558,5 +655,83 @@ mod tests {
         );
         assert!(module.is_none());
         assert_eq!(diags[0].code, Code::UnknownCurrency);
+    }
+
+    #[test]
+    fn resolves_split() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{PRELUDE} txn "t" {{
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split(m, 20.00);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }}"#
+        ));
+        assert!(diags.is_empty(), "{diags:?}");
+        let module = module.unwrap();
+        let stmts = &module.txns[0].stmts;
+        let ResolvedStmt::Split { a, b, .. } = &stmts[1] else {
+            panic!("expected a split statement");
+        };
+        let ResolvedStmt::Debit { value: ResolvedMoneyExpr::Var { symbol: used_a, .. }, .. } =
+            &stmts[2]
+        else {
+            panic!("expected a debit of a variable");
+        };
+        let ResolvedStmt::Debit { value: ResolvedMoneyExpr::Var { symbol: used_b, .. }, .. } =
+            &stmts[3]
+        else {
+            panic!("expected a debit of a variable");
+        };
+        assert_eq!(a, used_a);
+        assert_eq!(b, used_b);
+    }
+
+    #[test]
+    fn resolves_split_ratio() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{PRELUDE} txn "t" {{
+                let m = credit(assets:cash, 45.00);
+                let (a, b) = split_ratio(m, 1, 2);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }}"#
+        ));
+        assert!(diags.is_empty(), "{diags:?}");
+        let module = module.unwrap();
+        let ResolvedStmt::SplitRatio { a_weight, b_weight, .. } = &module.txns[0].stmts[1] else {
+            panic!("expected a split_ratio statement");
+        };
+        assert_eq!(*a_weight, 1);
+        assert_eq!(*b_weight, 2);
+    }
+
+    #[test]
+    fn resolves_merge() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{PRELUDE} txn "t" {{
+                let a = credit(assets:cash, 20.00);
+                let b = credit(assets:cash, 25.00);
+                debit(expenses:coffee, merge(a, b));
+            }}"#
+        ));
+        assert!(diags.is_empty(), "{diags:?}");
+        let module = module.unwrap();
+        assert!(matches!(
+            &module.txns[0].stmts[2],
+            ResolvedStmt::Debit { value: ResolvedMoneyExpr::Merge { .. }, .. }
+        ));
+    }
+
+    #[test]
+    fn merge_with_an_unbound_name_is_reported() {
+        let (module, diags) = resolve_src(&format!(
+            r#"{PRELUDE} txn "t" {{
+                let a = credit(assets:cash, 20.00);
+                debit(expenses:coffee, merge(a, nonexistent));
+            }}"#
+        ));
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::UnboundName);
     }
 }
