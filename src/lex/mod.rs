@@ -28,6 +28,9 @@ pub enum TokenKind {
     KwDown,
     KwConvert,
     KwAbsorb,
+    KwSplit,
+    KwSplitRatio,
+    KwMerge,
     Ident(String),
     /// Raw literal text, e.g. `"45"` or `"45.00"`; lowering to `Amount` happens in
     /// `typeck` (D-024), once the literal's currency (and hence scale) is known.
@@ -171,6 +174,9 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                     "down" => TokenKind::KwDown,
                     "convert" => TokenKind::KwConvert,
                     "absorb" => TokenKind::KwAbsorb,
+                    "split" => TokenKind::KwSplit,
+                    "split_ratio" => TokenKind::KwSplitRatio,
+                    "merge" => TokenKind::KwMerge,
                     _ => TokenKind::Ident(text.to_string()),
                 };
                 tokens.push(tok(kind, start, pos));
@@ -222,7 +228,7 @@ mod tests {
     #[test]
     fn keywords_recognized() {
         let (tokens, _) = lex(
-            "txn let debit credit currency account scale rate from to round down convert absorb",
+            "txn let debit credit currency account scale rate from to round down convert absorb split split_ratio merge",
         );
         let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(
@@ -242,6 +248,9 @@ mod tests {
                 TokenKind::KwDown,
                 TokenKind::KwConvert,
                 TokenKind::KwAbsorb,
+                TokenKind::KwSplit,
+                TokenKind::KwSplitRatio,
+                TokenKind::KwMerge,
                 TokenKind::Eof
             ]
         );

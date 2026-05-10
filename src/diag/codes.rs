@@ -51,11 +51,20 @@ pub enum Code {
     Dropped,
     /// A `Money` value is consumed a second time (invariant 1).
     Reused,
-    /// A transaction's debits and credits do not sum equal (invariant 3). Reserved:
-    /// unreachable through Slice 3 given the grammar (every `credit`-introduced value
-    /// is consumed by exactly one `debit`, with no arithmetic to unbalance the sums in
-    /// between) — expected to become reachable once `split`/`merge` land in Slice 4.
+    /// A `split(e, n)` names an `n` exceeding `e`'s actual value (invariant 3,
+    /// T-Split's side condition, D-034) — checked in `eval`, since `e`'s concrete
+    /// amount generally isn't known until then. The one way invariant 3's balance
+    /// premise is still a real, computed check rather than falling out structurally
+    /// from linearity (T-Merge's arithmetic and T-SplitRatio's largest-remainder
+    /// allocation are both exact by construction and can't violate it).
     Unbalanced,
+    /// A `merge`/`split`/`split_ratio` chain nests a `MoneyExpr` more than
+    /// `parse::MAX_MONEY_EXPR_DEPTH` levels deep (Fix checkpoint B, D-031: no
+    /// recursive production existed to cap until Slice 4's `merge`).
+    ExprTooDeep,
+    /// A `split_ratio(e, p, q)` names weights `p` and `q` that are both zero — the
+    /// ratio `0 : 0` doesn't determine an allocation (T-SplitRatio's side condition).
+    ZeroRatio,
 }
 
 impl Code {
@@ -79,6 +88,8 @@ impl Code {
             Code::Dropped => "E_DROPPED",
             Code::Reused => "E_REUSED",
             Code::Unbalanced => "E_UNBALANCED",
+            Code::ExprTooDeep => "E_EXPR_TOO_DEEP",
+            Code::ZeroRatio => "E_ZERO_RATIO",
         }
     }
 }

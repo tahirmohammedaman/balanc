@@ -1,21 +1,25 @@
 //! `Vec<Token>` -> `ast::Module`, hand-written recursive descent (D-007).
 //!
-//! Grammar (Slice 3):
+//! Grammar (Slice 4):
 //!
 //! ```text
 //! Module        := Decl* Eof
 //! Decl          := CurrencyDecl | AccountDecl | RateDecl | TxnDecl
-//! CurrencyDecl  := "currency" Ident "{" "scale" "=" Decimal "}"
+//! CurrencyDecl  := "currency" Ident "{" "scale" "=" WholeNumber "}"
 //! AccountDecl   := "account" AccountPath "{" "currency" "=" Ident "}"
 //! RateDecl      := "rate" Ident "from" Ident "to" Ident "=" Decimal "round" "down" ";"
 //! TxnDecl       := "txn" String "{" Stmt* "}"
-//! Stmt          := LetStmt | ConvertStmt | DebitStmt | AbsorbStmt
+//! Stmt          := LetStmt | PairStmt | DebitStmt | AbsorbStmt
 //! LetStmt       := "let" Ident "=" MoneyExpr ";"
-//! ConvertStmt   := "let" "(" Ident "," Ident ")" "=" "convert" "(" MoneyExpr "," Ident ")" ";"
+//! PairStmt      := "let" "(" Ident "," Ident ")" "=" (ConvertCall | SplitCall | SplitRatioCall) ";"
+//! ConvertCall   := "convert" "(" MoneyExpr "," Ident ")"
+//! SplitCall     := "split" "(" MoneyExpr "," Decimal ")"
+//! SplitRatioCall:= "split_ratio" "(" MoneyExpr "," WholeNumber "," WholeNumber ")"
 //! DebitStmt     := "debit" "(" AccountPath "," MoneyExpr ")" ";"
 //! AbsorbStmt    := "absorb" "(" Ident "," AccountPath ")" ";"
-//! MoneyExpr     := CreditExpr | Var
+//! MoneyExpr     := CreditExpr | MergeExpr | Var
 //! CreditExpr    := "credit" "(" AccountPath "," Decimal ")"
+//! MergeExpr     := "merge" "(" MoneyExpr "," MoneyExpr ")"
 //! Var           := Ident
 //! AccountPath   := Ident (":" Ident)*
 //! ```
@@ -23,12 +27,17 @@
 //! `CurrencyDecl`, `AccountDecl`, `RateDecl`, and `TxnDecl` may appear in any order at
 //! module level — nothing here requires currencies before the accounts/rates that use
 //! them, or any of those before the transactions that reference them; `resolve` builds
-//! all three tables before walking transaction bodies. `ConvertStmt` is distinguished
-//! from `LetStmt` by one token of lookahead: `let` followed by `(` is always a
-//! `ConvertStmt` (an ordinary `let`'s left-hand side is a single `Ident`, never a
-//! parenthesized pair), so no backtracking is needed. `RateDecl`'s `round down` is
-//! required syntax even though `down` is the only value that currently type-checks
-//! (D-027).
+//! all three tables before walking transaction bodies. `PairStmt`'s three call forms
+//! are distinguished from `LetStmt`, and from each other, by lookahead only: `let`
+//! followed by `(` is always a `PairStmt` (an ordinary `let`'s left-hand side is a
+//! single `Ident`, never a parenthesized pair), and the keyword right after `=`
+//! decides which of the three it is — no backtracking needed either way. `RateDecl`'s
+//! `round down` is required syntax even though `down` is the only value that currently
+//! type-checks (D-027).
+//!
+//! `MergeExpr` is the first place `MoneyExpr` nests (every other `MoneyExpr` position
+//! takes an `AccountPath`/`Decimal`/`Ident`, never another `MoneyExpr`) — see
+//! `Parser::parse_money_expr`'s depth cap, `MAX_MONEY_EXPR_DEPTH`.
 //!
 //! No error recovery yet (Slice 6): the first unexpected token stops parsing and
 //! returns a single diagnostic, matching the lexer's fatal-error behaviour.
@@ -42,6 +51,12 @@ use ast::{
     AccountDecl, AccountPath, CurrencyDecl, DecimalLiteral, Module, MoneyExpr, RateDecl, Stmt,
     TxnDecl,
 };
+
+/// How many `MoneyExpr`s deep a `merge(...)` chain may nest before parsing gives up
+/// with a diagnostic instead of recursing further. Chosen generously relative to any
+/// real ledger expression (deeper than this is already an absurd program) while
+/// staying well inside a safe recursive-descent stack budget.
+const MAX_MONEY_EXPR_DEPTH: u32 = 256;
 
 pub fn parse(tokens: &[Token]) -> (Option<Module>, Vec<Diagnostic>) {
     let mut p = Parser { tokens, pos: 0 };
@@ -111,22 +126,24 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::LBrace, "'{'")?;
         self.expect(&TokenKind::KwScale, "'scale'")?;
         self.expect(&TokenKind::Eq, "'='")?;
-        let (scale, scale_span) = self.parse_scale()?;
+        let (scale, scale_span) = self.parse_whole_number("a whole number")?;
         let end = self.expect(&TokenKind::RBrace, "'}'")?;
         Ok(CurrencyDecl { name, name_span, scale, scale_span, span: start.to(end) })
     }
 
-    fn parse_scale(&mut self) -> PResult<(u32, Span)> {
+    /// Shared by `CurrencyDecl`'s `scale` and `SplitRatioCall`'s two weights (D-035) —
+    /// both want a bare non-negative integer, not a `Decimal` (which allows a `.`).
+    fn parse_whole_number(&mut self, expected: &str) -> PResult<(u32, Span)> {
         match &self.peek().kind {
             TokenKind::Decimal(text) if !text.contains('.') => {
                 let text = text.clone();
                 let span = self.advance().span;
-                let scale = text.parse().map_err(|_| {
-                    Diagnostic::new(Code::ParseUnexpectedToken, "scale is too large", span)
+                let value = text.parse().map_err(|_| {
+                    Diagnostic::new(Code::ParseUnexpectedToken, "number is too large", span)
                 })?;
-                Ok((scale, span))
+                Ok((value, span))
             }
-            _ => Err(self.unexpected("a whole number")),
+            _ => Err(self.unexpected(expected)),
         }
     }
 
@@ -180,39 +197,59 @@ impl<'a> Parser<'a> {
 
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         match &self.peek().kind {
-            TokenKind::KwLet => self.parse_let_or_convert(),
+            TokenKind::KwLet => self.parse_let_or_pair(),
             TokenKind::KwDebit => self.parse_debit(),
             TokenKind::KwAbsorb => self.parse_absorb(),
             _ => Err(self.unexpected("'let', 'debit', or 'absorb'")),
         }
     }
 
-    /// `let` followed by `(` is always a `ConvertStmt` — an ordinary `let`'s
-    /// left-hand side is a single `Ident`, never a parenthesized pair — so one token
-    /// of lookahead after `let` disambiguates without backtracking.
-    fn parse_let_or_convert(&mut self) -> PResult<Stmt> {
+    /// `let` followed by `(` is always one of `PairStmt`'s three forms — an ordinary
+    /// `let`'s left-hand side is a single `Ident`, never a parenthesized pair — so one
+    /// token of lookahead after `let` disambiguates `LetStmt` from `PairStmt` without
+    /// backtracking; which of the three `PairStmt` forms it is then comes from the
+    /// keyword right after `=`, one more token of lookahead.
+    fn parse_let_or_pair(&mut self) -> PResult<Stmt> {
         let start = self.expect(&TokenKind::KwLet, "'let'")?;
         if self.peek().kind == TokenKind::LParen {
-            self.parse_convert(start)
+            self.parse_pair_stmt(start)
         } else {
             let (name, name_span) = self.parse_ident()?;
             self.expect(&TokenKind::Eq, "'='")?;
-            let value = self.parse_money_expr()?;
+            let value = self.parse_money_expr(0)?;
             let end = self.expect(&TokenKind::Semi, "';'")?;
             Ok(Stmt::Let { name, name_span, value, span: start.to(end) })
         }
     }
 
-    fn parse_convert(&mut self, start: Span) -> PResult<Stmt> {
+    fn parse_pair_stmt(&mut self, start: Span) -> PResult<Stmt> {
         self.expect(&TokenKind::LParen, "'('")?;
-        let (primary_name, primary_span) = self.parse_ident()?;
+        let (a_name, a_span) = self.parse_ident()?;
         self.expect(&TokenKind::Comma, "','")?;
-        let (residual_name, residual_span) = self.parse_ident()?;
+        let (b_name, b_span) = self.parse_ident()?;
         self.expect(&TokenKind::RParen, "')'")?;
         self.expect(&TokenKind::Eq, "'='")?;
+        match &self.peek().kind {
+            TokenKind::KwConvert => self.parse_convert(start, a_name, a_span, b_name, b_span),
+            TokenKind::KwSplit => self.parse_split(start, a_name, a_span, b_name, b_span),
+            TokenKind::KwSplitRatio => {
+                self.parse_split_ratio(start, a_name, a_span, b_name, b_span)
+            }
+            _ => Err(self.unexpected("'convert', 'split', or 'split_ratio'")),
+        }
+    }
+
+    fn parse_convert(
+        &mut self,
+        start: Span,
+        primary_name: String,
+        primary_span: Span,
+        residual_name: String,
+        residual_span: Span,
+    ) -> PResult<Stmt> {
         self.expect(&TokenKind::KwConvert, "'convert'")?;
         self.expect(&TokenKind::LParen, "'('")?;
-        let money = self.parse_money_expr()?;
+        let money = self.parse_money_expr(0)?;
         self.expect(&TokenKind::Comma, "','")?;
         let (rate, rate_span) = self.parse_ident()?;
         self.expect(&TokenKind::RParen, "')'")?;
@@ -229,12 +266,61 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_split(
+        &mut self,
+        start: Span,
+        a_name: String,
+        a_span: Span,
+        b_name: String,
+        b_span: Span,
+    ) -> PResult<Stmt> {
+        self.expect(&TokenKind::KwSplit, "'split'")?;
+        self.expect(&TokenKind::LParen, "'('")?;
+        let money = self.parse_money_expr(0)?;
+        self.expect(&TokenKind::Comma, "','")?;
+        let amount = self.parse_amount()?;
+        self.expect(&TokenKind::RParen, "')'")?;
+        let end = self.expect(&TokenKind::Semi, "';'")?;
+        Ok(Stmt::Split { a_name, a_span, b_name, b_span, money, amount, span: start.to(end) })
+    }
+
+    fn parse_split_ratio(
+        &mut self,
+        start: Span,
+        a_name: String,
+        a_span: Span,
+        b_name: String,
+        b_span: Span,
+    ) -> PResult<Stmt> {
+        self.expect(&TokenKind::KwSplitRatio, "'split_ratio'")?;
+        self.expect(&TokenKind::LParen, "'('")?;
+        let money = self.parse_money_expr(0)?;
+        self.expect(&TokenKind::Comma, "','")?;
+        let (a_weight, a_weight_span) = self.parse_whole_number("a whole-number ratio weight")?;
+        self.expect(&TokenKind::Comma, "','")?;
+        let (b_weight, b_weight_span) = self.parse_whole_number("a whole-number ratio weight")?;
+        self.expect(&TokenKind::RParen, "')'")?;
+        let end = self.expect(&TokenKind::Semi, "';'")?;
+        Ok(Stmt::SplitRatio {
+            a_name,
+            a_span,
+            b_name,
+            b_span,
+            money,
+            a_weight,
+            a_weight_span,
+            b_weight,
+            b_weight_span,
+            span: start.to(end),
+        })
+    }
+
     fn parse_debit(&mut self) -> PResult<Stmt> {
         let start = self.expect(&TokenKind::KwDebit, "'debit'")?;
         self.expect(&TokenKind::LParen, "'('")?;
         let account = self.parse_account_path()?;
         self.expect(&TokenKind::Comma, "','")?;
-        let value = self.parse_money_expr()?;
+        let value = self.parse_money_expr(0)?;
         self.expect(&TokenKind::RParen, "')'")?;
         let end = self.expect(&TokenKind::Semi, "';'")?;
         Ok(Stmt::Debit { account, value, span: start.to(end) })
@@ -251,15 +337,36 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Absorb { residue_name, residue_span, account, span: start.to(end) })
     }
 
-    fn parse_money_expr(&mut self) -> PResult<MoneyExpr> {
+    /// `depth` counts how many `MergeExpr`s deep this call is nested — every other
+    /// `MoneyExpr` production is a leaf, so only `parse_merge` ever recurses back into
+    /// this function with `depth + 1`.
+    fn parse_money_expr(&mut self, depth: u32) -> PResult<MoneyExpr> {
+        if depth >= MAX_MONEY_EXPR_DEPTH {
+            return Err(Diagnostic::new(
+                Code::ExprTooDeep,
+                format!("expression nested more than {MAX_MONEY_EXPR_DEPTH} levels deep"),
+                self.peek().span,
+            ));
+        }
         match &self.peek().kind {
             TokenKind::KwCredit => self.parse_credit(),
+            TokenKind::KwMerge => self.parse_merge(depth),
             TokenKind::Ident(_) => {
                 let (name, span) = self.parse_ident()?;
                 Ok(MoneyExpr::Var { name, span })
             }
-            _ => Err(self.unexpected("'credit(...)' or a variable name")),
+            _ => Err(self.unexpected("'credit(...)', 'merge(...)', or a variable name")),
         }
+    }
+
+    fn parse_merge(&mut self, depth: u32) -> PResult<MoneyExpr> {
+        let start = self.expect(&TokenKind::KwMerge, "'merge'")?;
+        self.expect(&TokenKind::LParen, "'('")?;
+        let a = self.parse_money_expr(depth + 1)?;
+        self.expect(&TokenKind::Comma, "','")?;
+        let b = self.parse_money_expr(depth + 1)?;
+        let end = self.expect(&TokenKind::RParen, "')'")?;
+        Ok(MoneyExpr::Merge { a: Box::new(a), b: Box::new(b), span: start.to(end) })
     }
 
     fn parse_credit(&mut self) -> PResult<MoneyExpr> {
@@ -325,6 +432,9 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::KwDown => "'down'".to_string(),
         TokenKind::KwConvert => "'convert'".to_string(),
         TokenKind::KwAbsorb => "'absorb'".to_string(),
+        TokenKind::KwSplit => "'split'".to_string(),
+        TokenKind::KwSplitRatio => "'split_ratio'".to_string(),
+        TokenKind::KwMerge => "'merge'".to_string(),
         TokenKind::Ident(s) => format!("identifier '{s}'"),
         TokenKind::Decimal(s) => format!("number '{s}'"),
         TokenKind::Str(s) => format!("string \"{s}\""),
@@ -472,5 +582,101 @@ mod tests {
         let (module, diags) = parse_src(r#"txn "coffee" { debit(expenses:coffee, 45.00); }"#);
         assert!(module.is_none());
         assert_eq!(diags[0].code, Code::ParseUnexpectedToken);
+    }
+
+    #[test]
+    fn parses_split() {
+        let (module, diags) = parse_src(
+            r#"txn "t" {
+                let (a, b) = split(m, 20.00);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }"#,
+        );
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        match &module.txns[0].stmts[0] {
+            Stmt::Split { a_name, b_name, amount, .. } => {
+                assert_eq!(a_name, "a");
+                assert_eq!(b_name, "b");
+                assert_eq!(amount.text, "20.00");
+            }
+            _ => panic!("expected a split statement"),
+        }
+    }
+
+    #[test]
+    fn parses_split_ratio() {
+        let (module, diags) = parse_src(
+            r#"txn "t" {
+                let (a, b) = split_ratio(m, 1, 2);
+                debit(expenses:a, a);
+                debit(expenses:b, b);
+            }"#,
+        );
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        match &module.txns[0].stmts[0] {
+            Stmt::SplitRatio { a_name, b_name, a_weight, b_weight, .. } => {
+                assert_eq!(a_name, "a");
+                assert_eq!(b_name, "b");
+                assert_eq!(*a_weight, 1);
+                assert_eq!(*b_weight, 2);
+            }
+            _ => panic!("expected a split_ratio statement"),
+        }
+    }
+
+    #[test]
+    fn split_ratio_rejects_a_fractional_weight() {
+        let (module, diags) =
+            parse_src(r#"txn "t" { let (a, b) = split_ratio(m, 1.5, 2); }"#);
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::ParseUnexpectedToken);
+    }
+
+    #[test]
+    fn parses_merge_including_nested() {
+        let (module, diags) = parse_src(
+            r#"txn "t" { debit(expenses:coffee, merge(credit(assets:cash, 5.00), merge(a, b))); }"#,
+        );
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        assert!(matches!(
+            &module.txns[0].stmts[0],
+            Stmt::Debit { value: MoneyExpr::Merge { .. }, .. }
+        ));
+    }
+
+    #[test]
+    fn deeply_nested_merge_is_rejected_as_too_deep() {
+        let mut src = String::from(r#"txn "t" { debit(expenses:coffee, "#);
+        for _ in 0..(MAX_MONEY_EXPR_DEPTH + 1) {
+            src.push_str("merge(a, ");
+        }
+        src.push('a');
+        for _ in 0..(MAX_MONEY_EXPR_DEPTH + 1) {
+            src.push(')');
+        }
+        src.push_str("); }");
+        let (module, diags) = parse_src(&src);
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::ExprTooDeep);
+    }
+
+    #[test]
+    fn merge_within_the_depth_cap_still_parses() {
+        let mut src = String::from(r#"txn "t" { debit(expenses:coffee, "#);
+        for _ in 0..(MAX_MONEY_EXPR_DEPTH - 1) {
+            src.push_str("merge(a, ");
+        }
+        src.push('a');
+        for _ in 0..(MAX_MONEY_EXPR_DEPTH - 1) {
+            src.push(')');
+        }
+        src.push_str("); }");
+        let (module, diags) = parse_src(&src);
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(module.is_some());
     }
 }
