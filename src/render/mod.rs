@@ -51,8 +51,9 @@ mod tests {
         let (typed, diags) = typeck(resolved.unwrap());
         assert!(diags.is_empty(), "typeck failed: {diags:?}");
         let typed = typed.unwrap();
-        let ledger = crate::eval::eval(&typed);
-        render_trial_balance(&typed, &ledger)
+        let (ledger, diags) = crate::eval::eval(&typed);
+        assert!(diags.is_empty(), "eval failed: {diags:?}");
+        render_trial_balance(&typed, &ledger.unwrap())
     }
 
     #[test]

@@ -43,7 +43,12 @@ pub fn run(file: &SourceFile) -> Result<String, String> {
         None => return Err(render_diags(diags, file)),
     };
 
-    let ledger = eval::eval(&typed);
+    let (ledger, diags) = eval::eval(&typed);
+    let ledger = match ledger {
+        Some(ledger) => ledger,
+        None => return Err(render_diags(diags, file)),
+    };
+
     Ok(render::render_trial_balance(&typed, &ledger))
 }
 
