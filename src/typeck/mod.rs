@@ -391,19 +391,19 @@ mod tests {
     const PRELUDE: &str = r#"
         currency ETB { scale = 2 }
         currency USD { scale = 2 }
-        account assets:cash { currency = ETB }
-        account assets:usd_cash { currency = USD }
-        account expenses:coffee { currency = ETB }
-        account expenses:a { currency = ETB }
-        account expenses:b { currency = ETB }
+        account assets:cash { currency = ETB, kind = asset, normal = debit }
+        account assets:usd_cash { currency = USD, kind = asset, normal = debit }
+        account expenses:coffee { currency = ETB, kind = expense, normal = debit }
+        account expenses:a { currency = ETB, kind = expense, normal = debit }
+        account expenses:b { currency = ETB, kind = expense, normal = debit }
     "#;
 
     const FX_PRELUDE: &str = r#"
         currency USD { scale = 2 }
         currency ETB { scale = 2 }
-        account assets:usd_cash { currency = USD }
-        account assets:etb_cash { currency = ETB }
-        account income:fx_rounding { currency = ETB }
+        account assets:usd_cash { currency = USD, kind = asset, normal = debit }
+        account assets:etb_cash { currency = ETB, kind = asset, normal = debit }
+        account income:fx_rounding { currency = ETB, kind = income, normal = credit }
         rate usd_etb from USD to ETB = 57.20 round down;
     "#;
 
@@ -480,8 +480,8 @@ mod tests {
     fn too_many_fraction_digits_for_currency_scale_is_reported() {
         let (module, diags) = typeck_src_no_prelude(
             r#"currency JPY { scale = 0 }
-               account assets:cash { currency = JPY }
-               account expenses:coffee { currency = JPY }
+               account assets:cash { currency = JPY, kind = asset, normal = debit }
+               account expenses:coffee { currency = JPY, kind = expense, normal = debit }
                txn "t" { debit(expenses:coffee, credit(assets:cash, 45.50)); }"#,
         );
         assert!(module.is_none());
@@ -495,8 +495,8 @@ mod tests {
         // diagnostic (a lexer-valid literal's magnitude can still overflow `i64`).
         let (module, diags) = typeck_src_no_prelude(&format!(
             r#"currency JPY {{ scale = 0 }}
-               account assets:cash {{ currency = JPY }}
-               account expenses:coffee {{ currency = JPY }}
+               account assets:cash {{ currency = JPY, kind = asset, normal = debit }}
+               account expenses:coffee {{ currency = JPY, kind = expense, normal = debit }}
                txn "t" {{ debit(expenses:coffee, credit(assets:cash, {})); }}"#,
             "9".repeat(30)
         ));

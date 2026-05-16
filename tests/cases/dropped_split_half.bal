@@ -1,7 +1,7 @@
 currency ETB { scale = 2 }
 
-account assets:cash { currency = ETB }
-account expenses:rent { currency = ETB }
+account assets:cash { currency = ETB, kind = asset, normal = debit }
+account expenses:rent { currency = ETB, kind = expense, normal = debit }
 
 txn "rent" {
   let m = credit(assets:cash, 100.00);
