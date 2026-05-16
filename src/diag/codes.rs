@@ -65,6 +65,12 @@ pub enum Code {
     /// A `split_ratio(e, p, q)` names weights `p` and `q` that are both zero — the
     /// ratio `0 : 0` doesn't determine an allocation (T-SplitRatio's side condition).
     ZeroRatio,
+    /// An `account` declaration's `kind` field names something other than one of the
+    /// five closed values (`asset`/`liability`/`equity`/`income`/`expense`, Slice 5).
+    /// `kind` is a bare `Ident`, not a set of keywords (D-036), so this closed-set
+    /// membership check happens here, in `resolve`, the same place `E_UNKNOWN_CURRENCY`
+    /// checks a currency name against the (open, user-declared) currency table.
+    UnknownAccountKind,
 }
 
 impl Code {
@@ -90,6 +96,7 @@ impl Code {
             Code::Unbalanced => "E_UNBALANCED",
             Code::ExprTooDeep => "E_EXPR_TOO_DEEP",
             Code::ZeroRatio => "E_ZERO_RATIO",
+            Code::UnknownAccountKind => "E_UNKNOWN_ACCOUNT_KIND",
         }
     }
 }

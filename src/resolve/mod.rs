@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 
 use crate::diag::{Code, Diagnostic};
-use crate::parse::ast::{self, AccountPath, DecimalLiteral};
+use crate::parse::ast::{self, AccountPath, DecimalLiteral, NormalBalance};
 use crate::span::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -49,6 +49,26 @@ pub struct AccountInfo {
     /// Rendered form, e.g. `"assets:cash"` — used in diagnostics and reports.
     pub path: String,
     pub currency: CurrencyId,
+    /// Report-time category (Slice 5) — drives `render`'s section grouping.
+    pub kind: AccountKind,
+    /// Which side of a debit/credit entry this account's balance is conventionally
+    /// displayed positive on (Slice 5) — independent of `kind`, so a contra account
+    /// (e.g. an asset-kind account with a credit normal balance) is representable.
+    pub normal: NormalBalance,
+}
+
+/// The five closed report categories a Slice 5 `account` declaration's `kind` field
+/// may name. Unlike `CurrencyId`/`AccountId`/`RateId`, this isn't a table of
+/// user-declared entries — it's a fixed, built-in enumeration, so resolving a `kind`
+/// string means matching it against these five spellings rather than looking it up in
+/// a `HashMap` built from the module (D-036).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountKind {
+    Asset,
+    Liability,
+    Equity,
+    Income,
+    Expense,
 }
 
 /// A declared conversion rate. `numerator`/`scale` are the rate's own literal lowered
@@ -326,9 +346,12 @@ fn resolve_accounts(
             ));
             continue;
         };
+        let Some(kind) = resolve_account_kind(&decl.kind, decl.kind_span, diags) else {
+            continue;
+        };
         let id = AccountId(accounts.len() as u32);
         ids.insert(path.clone(), (id, decl.path.span));
-        accounts.push(AccountInfo { path, currency });
+        accounts.push(AccountInfo { path, currency, kind, normal: decl.normal });
     }
 
     (accounts, ids)
@@ -384,6 +407,32 @@ fn resolve_rates(
     }
 
     (rates, ids)
+}
+
+/// Matches an `account` declaration's `kind` text against the five closed values —
+/// see `AccountKind`'s doc comment for why this is a fixed match, not a table lookup.
+fn resolve_account_kind(
+    text: &str,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<AccountKind> {
+    match text {
+        "asset" => Some(AccountKind::Asset),
+        "liability" => Some(AccountKind::Liability),
+        "equity" => Some(AccountKind::Equity),
+        "income" => Some(AccountKind::Income),
+        "expense" => Some(AccountKind::Expense),
+        _ => {
+            diags.push(Diagnostic::new(
+                Code::UnknownAccountKind,
+                format!(
+                    "no such account kind '{text}' (expected one of: asset, liability, equity, income, expense)"
+                ),
+                span,
+            ));
+            None
+        }
+    }
 }
 
 fn resolve_rate_ref(
@@ -487,10 +536,10 @@ mod tests {
 
     const PRELUDE: &str = r#"
         currency ETB { scale = 2 }
-        account assets:cash { currency = ETB }
-        account expenses:coffee { currency = ETB }
-        account expenses:a { currency = ETB }
-        account expenses:b { currency = ETB }
+        account assets:cash { currency = ETB, kind = asset, normal = debit }
+        account expenses:coffee { currency = ETB, kind = expense, normal = debit }
+        account expenses:a { currency = ETB, kind = expense, normal = debit }
+        account expenses:b { currency = ETB, kind = expense, normal = debit }
     "#;
 
     #[test]
@@ -553,9 +602,22 @@ mod tests {
 
     #[test]
     fn account_naming_unknown_currency_is_reported() {
-        let (module, diags) = resolve_src(r#"account assets:cash { currency = USD } txn "t" { }"#);
+        let (module, diags) = resolve_src(
+            r#"account assets:cash { currency = USD, kind = asset, normal = debit } txn "t" { }"#,
+        );
         assert!(module.is_none());
         assert_eq!(diags[0].code, Code::UnknownCurrency);
+    }
+
+    #[test]
+    fn account_naming_unknown_kind_is_reported() {
+        let (module, diags) = resolve_src(
+            r#"currency ETB { scale = 2 }
+               account assets:cash { currency = ETB, kind = bogus, normal = debit }
+               txn "t" { }"#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags[0].code, Code::UnknownAccountKind);
     }
 
     #[test]
@@ -573,8 +635,8 @@ mod tests {
     fn duplicate_account_is_reported() {
         let (module, diags) = resolve_src(
             r#"currency ETB { scale = 2 }
-               account assets:cash { currency = ETB }
-               account assets:cash { currency = ETB }
+               account assets:cash { currency = ETB, kind = asset, normal = debit }
+               account assets:cash { currency = ETB, kind = asset, normal = debit }
                txn "t" { }"#,
         );
         assert!(module.is_none());
@@ -584,9 +646,9 @@ mod tests {
     const FX_PRELUDE: &str = r#"
         currency USD { scale = 2 }
         currency ETB { scale = 2 }
-        account assets:usd_cash { currency = USD }
-        account assets:etb_cash { currency = ETB }
-        account income:fx_rounding { currency = ETB }
+        account assets:usd_cash { currency = USD, kind = asset, normal = debit }
+        account assets:etb_cash { currency = ETB, kind = asset, normal = debit }
+        account income:fx_rounding { currency = ETB, kind = income, normal = credit }
         rate usd_etb from USD to ETB = 57.20 round down;
     "#;
 
