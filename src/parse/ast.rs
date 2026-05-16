@@ -39,16 +39,40 @@ pub struct CurrencyDecl {
     pub span: Span,
 }
 
-/// `account PATH { currency = CURRENCY }` — binds an account path to a currency
-/// (D-022, D-023). The `{ field = value }` block mirrors `CurrencyDecl`'s own shape
-/// rather than a `:` connector, which is ambiguous with `AccountPath`'s own `:`
-/// separator (D-025). Minimal through Slice 2: no account kind or normal-balance sign
-/// yet (Slice 5 adds those as more fields in the same block).
+/// `account PATH { currency = CURRENCY, kind = KIND, normal = (debit|credit) }` —
+/// binds an account path to a currency (D-022, D-023), a report-time category
+/// (`KIND`, Slice 5), and a normal-balance sign (Slice 5). The `{ field = value }`
+/// block mirrors `CurrencyDecl`'s own shape rather than a `:` connector, which is
+/// ambiguous with `AccountPath`'s own `:` separator (D-025).
+///
+/// `kind` stays a bare `Ident`, not a keyword per legal value, even though the set of
+/// legal values (`asset`/`liability`/`equity`/`income`/`expense`) is closed and known
+/// up front — reserving `income`/`expense` as keywords would break every existing
+/// `AccountPath` using them as a segment (e.g. `income:fx_rounding`), so `resolve`
+/// validates the text against the closed set instead, the same way it already
+/// validates a currency name against the declared table (D-036). `normal` has no such
+/// collision (`debit`/`credit` are already reserved statement keywords with no
+/// account-path collision possible), so it's parsed directly as one of those two
+/// keywords with no further validation needed.
 pub struct AccountDecl {
     pub path: AccountPath,
     pub currency: String,
     pub currency_span: Span,
+    pub kind: String,
+    pub kind_span: Span,
+    pub normal: NormalBalance,
+    pub normal_span: Span,
     pub span: Span,
+}
+
+/// An account's normal-balance sign (Slice 5) — which side of a debit/credit entry
+/// this account's balance is conventionally displayed positive on. Fully determined by
+/// which of the two reserved keywords the declaration used, so (unlike `kind`) there's
+/// nothing left for `resolve` to validate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormalBalance {
+    Debit,
+    Credit,
 }
 
 /// `rate NAME from A to B = VALUE round down;` (D-027 — flat statement; `round down`

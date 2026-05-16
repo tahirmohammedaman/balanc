@@ -21,6 +21,8 @@ pub enum TokenKind {
     KwCurrency,
     KwAccount,
     KwScale,
+    KwKind,
+    KwNormal,
     KwRate,
     KwFrom,
     KwTo,
@@ -167,6 +169,8 @@ pub fn lex(source: &str) -> (Option<Vec<Token>>, Vec<Diagnostic>) {
                     "currency" => TokenKind::KwCurrency,
                     "account" => TokenKind::KwAccount,
                     "scale" => TokenKind::KwScale,
+                    "kind" => TokenKind::KwKind,
+                    "normal" => TokenKind::KwNormal,
                     "rate" => TokenKind::KwRate,
                     "from" => TokenKind::KwFrom,
                     "to" => TokenKind::KwTo,
@@ -228,7 +232,7 @@ mod tests {
     #[test]
     fn keywords_recognized() {
         let (tokens, _) = lex(
-            "txn let debit credit currency account scale rate from to round down convert absorb split split_ratio merge",
+            "txn let debit credit currency account scale kind normal rate from to round down convert absorb split split_ratio merge",
         );
         let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(
@@ -241,6 +245,8 @@ mod tests {
                 TokenKind::KwCurrency,
                 TokenKind::KwAccount,
                 TokenKind::KwScale,
+                TokenKind::KwKind,
+                TokenKind::KwNormal,
                 TokenKind::KwRate,
                 TokenKind::KwFrom,
                 TokenKind::KwTo,
@@ -252,6 +258,29 @@ mod tests {
                 TokenKind::KwSplitRatio,
                 TokenKind::KwMerge,
                 TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn account_kind_words_stay_plain_identifiers() {
+        // `kind`/`normal` are keywords (the field names), but the five legal kind
+        // *values* (asset/liability/equity/income/expense, Slice 5) deliberately are
+        // not: `income` and `expense` already appear as ordinary `AccountPath`
+        // segments in the existing corpus (e.g. `income:fx_rounding`), so reserving
+        // them would break every such path (D-036).
+        let (tokens, diags) = lex("asset liability equity income expense");
+        assert!(diags.is_empty());
+        let kinds: Vec<_> = tokens.unwrap().into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("asset".to_string()),
+                TokenKind::Ident("liability".to_string()),
+                TokenKind::Ident("equity".to_string()),
+                TokenKind::Ident("income".to_string()),
+                TokenKind::Ident("expense".to_string()),
+                TokenKind::Eof,
             ]
         );
     }

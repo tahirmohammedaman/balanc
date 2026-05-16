@@ -6,7 +6,8 @@
 //! Module        := Decl* Eof
 //! Decl          := CurrencyDecl | AccountDecl | RateDecl | TxnDecl
 //! CurrencyDecl  := "currency" Ident "{" "scale" "=" WholeNumber "}"
-//! AccountDecl   := "account" AccountPath "{" "currency" "=" Ident "}"
+//! AccountDecl   := "account" AccountPath "{" "currency" "=" Ident ","
+//!                    "kind" "=" Ident "," "normal" "=" ("debit" | "credit") "}"
 //! RateDecl      := "rate" Ident "from" Ident "to" Ident "=" Decimal "round" "down" ";"
 //! TxnDecl       := "txn" String "{" Stmt* "}"
 //! Stmt          := LetStmt | PairStmt | DebitStmt | AbsorbStmt
@@ -48,8 +49,8 @@ use crate::diag::{Code, Diagnostic};
 use crate::lex::{Token, TokenKind};
 use crate::span::Span;
 use ast::{
-    AccountDecl, AccountPath, CurrencyDecl, DecimalLiteral, Module, MoneyExpr, RateDecl, Stmt,
-    TxnDecl,
+    AccountDecl, AccountPath, CurrencyDecl, DecimalLiteral, Module, MoneyExpr, NormalBalance,
+    RateDecl, Stmt, TxnDecl,
 };
 
 /// How many `MoneyExpr`s deep a `merge(...)` chain may nest before parsing gives up
@@ -154,8 +155,33 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::KwCurrency, "'currency'")?;
         self.expect(&TokenKind::Eq, "'='")?;
         let (currency, currency_span) = self.parse_ident()?;
+        self.expect(&TokenKind::Comma, "','")?;
+        self.expect(&TokenKind::KwKind, "'kind'")?;
+        self.expect(&TokenKind::Eq, "'='")?;
+        let (kind, kind_span) = self.parse_ident()?;
+        self.expect(&TokenKind::Comma, "','")?;
+        self.expect(&TokenKind::KwNormal, "'normal'")?;
+        self.expect(&TokenKind::Eq, "'='")?;
+        let (normal, normal_span) = self.parse_normal_balance()?;
         let end = self.expect(&TokenKind::RBrace, "'}'")?;
-        Ok(AccountDecl { path, currency, currency_span, span: start.to(end) })
+        Ok(AccountDecl {
+            path,
+            currency,
+            currency_span,
+            kind,
+            kind_span,
+            normal,
+            normal_span,
+            span: start.to(end),
+        })
+    }
+
+    fn parse_normal_balance(&mut self) -> PResult<(NormalBalance, Span)> {
+        match &self.peek().kind {
+            TokenKind::KwDebit => Ok((NormalBalance::Debit, self.advance().span)),
+            TokenKind::KwCredit => Ok((NormalBalance::Credit, self.advance().span)),
+            _ => Err(self.unexpected("'debit' or 'credit'")),
+        }
     }
 
     fn parse_rate_decl(&mut self) -> PResult<RateDecl> {
@@ -425,6 +451,8 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::KwCurrency => "'currency'".to_string(),
         TokenKind::KwAccount => "'account'".to_string(),
         TokenKind::KwScale => "'scale'".to_string(),
+        TokenKind::KwKind => "'kind'".to_string(),
+        TokenKind::KwNormal => "'normal'".to_string(),
         TokenKind::KwRate => "'rate'".to_string(),
         TokenKind::KwFrom => "'from'".to_string(),
         TokenKind::KwTo => "'to'".to_string(),
@@ -507,7 +535,7 @@ mod tests {
         let (module, diags) = parse_src(
             r#"
             currency ETB { scale = 2 }
-            account assets:cash { currency = ETB }
+            account assets:cash { currency = ETB, kind = asset, normal = debit }
             txn "coffee" { let m = credit(assets:cash, 45.00); debit(expenses:coffee, m); }
             "#,
         );
@@ -519,6 +547,21 @@ mod tests {
         assert_eq!(module.accounts.len(), 1);
         assert_eq!(module.accounts[0].path.to_string(), "assets:cash");
         assert_eq!(module.accounts[0].currency, "ETB");
+        assert_eq!(module.accounts[0].kind, "asset");
+        assert_eq!(module.accounts[0].normal, NormalBalance::Debit);
+    }
+
+    #[test]
+    fn parses_credit_normal_balance() {
+        let (module, diags) = parse_src(
+            r#"currency ETB { scale = 2 }
+               account equity:owner_capital { currency = ETB, kind = equity, normal = credit }
+               txn "t" { }"#,
+        );
+        assert!(diags.is_empty());
+        let module = module.unwrap();
+        assert_eq!(module.accounts[0].kind, "equity");
+        assert_eq!(module.accounts[0].normal, NormalBalance::Credit);
     }
 
     #[test]
