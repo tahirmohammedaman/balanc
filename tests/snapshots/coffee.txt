@@ -1,4 +1,5 @@
 Trial Balance (ETB)
   assets:cash                    -45.00
   expenses:coffee                 45.00
-  Total                            0.00
+  Debit total                      0.00
+  Credit total                     0.00
