@@ -25,8 +25,9 @@ use crate::typeck::{TModule, TMoneyExpr, TStmt, TTxnDecl};
 /// (`"assets:cash"`) — every account has exactly one currency (its declaration), so
 /// the path alone is enough to key by; `render` looks the currency back up via
 /// `TModule::accounts` when it needs it. Debits (and `absorb`s) increase a balance,
-/// credits decrease it — the raw double-entry convention with no normal-balance sign
-/// flip yet (that lands with account declarations in Slice 5).
+/// credits decrease it — uniformly, regardless of any account's `kind` or `normal`
+/// balance (Slice 5, `resolve::AccountInfo`): those are report-time metadata only.
+/// `render` is the sole place a raw balance here is ever sign-flipped for display.
 pub type LedgerState = BTreeMap<String, Amount>;
 
 /// A binding's runtime value: an ordinary `Money` amount, or a `convert`-produced
@@ -218,14 +219,14 @@ fn post(ledger: &mut LedgerState, account: &str, delta: Amount) {
 mod tests {
     use super::*;
     use crate::lex::lex;
-    use crate::parse::parse;
+    use crate::parse::{ast, parse};
     use crate::resolve::resolve;
     use crate::typeck::typeck;
 
     const PRELUDE: &str = r#"
         currency ETB { scale = 2 }
-        account assets:cash { currency = ETB }
-        account expenses:coffee { currency = ETB }
+        account assets:cash { currency = ETB, kind = asset, normal = debit }
+        account expenses:coffee { currency = ETB, kind = expense, normal = debit }
     "#;
 
     fn eval_src(src: &str) -> LedgerState {
@@ -329,9 +330,9 @@ mod tests {
     const FX_PRELUDE: &str = r#"
         currency USD { scale = 2 }
         currency ETB { scale = 2 }
-        account assets:usd_cash { currency = USD }
-        account assets:etb_cash { currency = ETB }
-        account income:fx_rounding { currency = ETB }
+        account assets:usd_cash { currency = USD, kind = asset, normal = debit }
+        account assets:etb_cash { currency = ETB, kind = asset, normal = debit }
+        account income:fx_rounding { currency = ETB, kind = income, normal = credit }
         rate usd_etb from USD to ETB = 57.20 round down;
     "#;
 
@@ -415,6 +416,86 @@ mod tests {
             let (ra, rb) = split_ratio(total, a_weight, b_weight);
             assert_eq!(ra + rb, total, "split_ratio({total_cents}, {a_weight}, {b_weight})");
             assert!(!ra.is_negative() && !rb.is_negative());
+        }
+    }
+
+    // PLAN.md's Slice 5 proof test ("Accounting equation holds after evaluating the
+    // example corpus"), scoped the way `render`'s doc comment says it must be: only
+    // over programs where `convert` never moves a currency's own credited value into
+    // a different currency's ledger (D-029). Every kind (asset/liability/equity/
+    // income/expense) and both `normal` values appear, across two currencies, using
+    // plain `debit`/`credit`/`split`/`split_ratio`/`merge` — no `convert` — and for
+    // each currency, the sum of debit-normal accounts' raw balances must equal the sum
+    // of credit-normal accounts' raw balances (render's "Debit total"/"Credit total",
+    // computed here directly against `LedgerState` rather than the rendered text).
+    #[test]
+    fn convert_free_examples_satisfy_the_accounting_equation() {
+        let src = r#"
+            currency ETB { scale = 2 }
+            currency USD { scale = 2 }
+
+            account assets:cash { currency = ETB, kind = asset, normal = debit }
+            account liabilities:loan { currency = ETB, kind = liability, normal = credit }
+            account equity:owner_capital { currency = ETB, kind = equity, normal = credit }
+            account income:consulting { currency = ETB, kind = income, normal = credit }
+            account expenses:rent { currency = ETB, kind = expense, normal = debit }
+            account expenses:utilities { currency = ETB, kind = expense, normal = debit }
+
+            account assets:usd_cash { currency = USD, kind = asset, normal = debit }
+            account expenses:software { currency = USD, kind = expense, normal = debit }
+
+            txn "capitalize" {
+                let m = credit(equity:owner_capital, 1000.00);
+                debit(assets:cash, m);
+            }
+            txn "borrow" {
+                let m = credit(liabilities:loan, 500.00);
+                debit(assets:cash, m);
+            }
+            txn "earn" {
+                let m = credit(income:consulting, 300.00);
+                let (a, b) = split(m, 100.00);
+                debit(assets:cash, merge(a, b));
+            }
+            txn "spend" {
+                let m = credit(assets:cash, 90.00);
+                let (rent, utilities) = split_ratio(m, 2, 1);
+                debit(expenses:rent, rent);
+                debit(expenses:utilities, utilities);
+            }
+            txn "saas" {
+                debit(expenses:software, credit(assets:usd_cash, 10.00));
+            }
+        "#;
+        let (tokens, _) = lex(src);
+        let (module, _) = parse(&tokens.unwrap());
+        let (resolved, diags) = resolve(module.unwrap());
+        assert!(diags.is_empty(), "resolve failed: {diags:?}");
+        let (typed, diags) = typeck(resolved.unwrap());
+        assert!(diags.is_empty(), "typeck failed: {diags:?}");
+        let typed = typed.unwrap();
+        let (ledger, diags) = eval(&typed);
+        assert!(diags.is_empty(), "eval failed: {diags:?}");
+        let ledger = ledger.unwrap();
+
+        for (idx, currency) in typed.currencies.iter().enumerate() {
+            let mut debit_total = Amount::ZERO;
+            let mut credit_total = Amount::ZERO;
+            for account in &typed.accounts {
+                if account.currency.0 as usize != idx {
+                    continue;
+                }
+                let Some(&raw) = ledger.get(&account.path) else { continue };
+                match account.normal {
+                    ast::NormalBalance::Debit => debit_total = debit_total + raw,
+                    ast::NormalBalance::Credit => credit_total = credit_total - raw,
+                }
+            }
+            assert_eq!(
+                debit_total, credit_total,
+                "accounting equation failed for {}",
+                currency.name
+            );
         }
     }
 }
