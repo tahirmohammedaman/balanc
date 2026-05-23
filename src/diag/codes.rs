@@ -99,6 +99,65 @@ impl Code {
             Code::UnknownAccountKind => "E_UNKNOWN_ACCOUNT_KIND",
         }
     }
+
+    /// Fixed, general guidance for this class of error — printed as the trailing
+    /// `= note:` line of every diagnostic with this code (Slice 6), regardless of the
+    /// specific message above it.
+    pub fn note(self) -> &'static str {
+        match self {
+            Code::LexUnexpectedChar => "remove or replace the invalid character",
+            Code::ParseUnexpectedToken => "check the grammar for what's expected at this point",
+            Code::ParseUnexpectedEof => {
+                "the file ended before a construct was closed — check for a missing '}' or ';'"
+            }
+            Code::UnboundName => {
+                "check the spelling, or add a 'let' binding for this name earlier in the transaction"
+            }
+            Code::UnknownCurrency => {
+                "declare this currency with a 'currency NAME { scale = N }' block before referencing it"
+            }
+            Code::DuplicateCurrency => "each currency name may only be declared once",
+            Code::DuplicateAccount => "each account path may only be declared once",
+            Code::UndeclaredAccount => {
+                "declare this account with an 'account PATH { ... }' block before crediting or debiting it"
+            }
+            Code::TooManyFractionDigits => {
+                "round the literal to the currency's declared scale, or declare the currency with a larger scale"
+            }
+            Code::AmountOutOfRange => {
+                "this magnitude does not fit the fixed-point representation this language uses"
+            }
+            Code::CurrencyMismatch => {
+                "money only moves between accounts, rates, or residues that share the same currency — use 'convert' to cross currencies"
+            }
+            Code::UndeclaredRate => {
+                "declare this rate with a 'rate NAME from A to B = VALUE round down;' statement before referencing it"
+            }
+            Code::DuplicateRate => "each rate name may only be declared once",
+            Code::ExpectedMoney => {
+                "this binding holds a conversion residue — discharge it with 'absorb', not 'debit'"
+            }
+            Code::ExpectedResidue => {
+                "this binding holds ordinary money — discharge it with 'debit', not 'absorb'"
+            }
+            Code::Dropped => {
+                "every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'"
+            }
+            Code::Reused => {
+                "every money value bound in a transaction may only be consumed once — bind a new value instead of reusing this one"
+            }
+            Code::Unbalanced => {
+                "this operation would create or destroy money — check the amount against what's actually available"
+            }
+            Code::ExprTooDeep => {
+                "flatten this expression — deeply nested 'merge' chains are rejected before they risk overflowing the parser's stack"
+            }
+            Code::ZeroRatio => "at least one of split_ratio's two weights must be nonzero",
+            Code::UnknownAccountKind => {
+                "kind must be one of: asset, liability, equity, income, expense"
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Code {
