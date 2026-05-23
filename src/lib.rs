@@ -17,44 +17,43 @@ use diag::{sort_by_span, Diagnostic};
 use span::SourceFile;
 
 /// Runs the full pipeline over one source file. `Ok` is the rendered trial balance;
-/// `Err` is the rendered diagnostics that stopped the pipeline, sorted by span.
-pub fn run(file: &SourceFile) -> Result<String, String> {
+/// `Err` is the diagnostics that stopped the pipeline, sorted by span — callers render
+/// them as plain text (`diag::render_all`) or JSON (`diag::render_all_json`).
+pub fn run(file: &SourceFile) -> Result<String, Vec<Diagnostic>> {
     let (tokens, diags) = lex::lex(&file.text);
     let tokens = match tokens {
         Some(tokens) => tokens,
-        None => return Err(render_diags(diags, file)),
+        None => return Err(sorted(diags)),
     };
 
     let (module, diags) = parse::parse(&tokens);
     let module = match module {
         Some(module) => module,
-        None => return Err(render_diags(diags, file)),
+        None => return Err(sorted(diags)),
     };
 
     let (resolved, diags) = resolve::resolve(module);
     let resolved = match resolved {
         Some(resolved) => resolved,
-        None => return Err(render_diags(diags, file)),
+        None => return Err(sorted(diags)),
     };
 
     let (typed, diags) = typeck::typeck(resolved);
     let typed = match typed {
         Some(typed) => typed,
-        None => return Err(render_diags(diags, file)),
+        None => return Err(sorted(diags)),
     };
 
     let (ledger, diags) = eval::eval(&typed);
     let ledger = match ledger {
         Some(ledger) => ledger,
-        None => return Err(render_diags(diags, file)),
+        None => return Err(sorted(diags)),
     };
 
     Ok(render::render_trial_balance(&typed, &ledger))
 }
 
-fn render_diags(mut diags: Vec<Diagnostic>, file: &SourceFile) -> String {
+fn sorted(mut diags: Vec<Diagnostic>) -> Vec<Diagnostic> {
     sort_by_span(&mut diags);
-    let mut out = diags.iter().map(|d| d.render(file)).collect::<Vec<_>>().join("\n");
-    out.push('\n');
-    out
+    diags
 }
