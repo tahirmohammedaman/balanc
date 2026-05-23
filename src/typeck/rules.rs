@@ -95,8 +95,10 @@
 
 use std::collections::HashMap;
 
+use crate::amount::{Amount, LiteralError};
 use crate::diag::{Code, Diagnostic};
-use crate::resolve::{CurrencyId, SymbolId};
+use crate::parse::ast::DecimalLiteral;
+use crate::resolve::{AccountInfo, CurrencyId, CurrencyInfo, RateInfo, SymbolId};
 use crate::span::Span;
 
 /// Types in the balanc type system. `Money` and `Residue` (Slice 3, D-026) are the two
@@ -238,5 +240,328 @@ impl Context {
                 )
             })
             .collect()
+    }
+}
+
+/// Consumes `symbol` from Γ and checks it was the expected kind (`Money` or
+/// `Residue`), reporting `E_EXPECTED_MONEY`/`E_EXPECTED_RESIDUE` if not (D-026). Not
+/// itself one of the numbered rules above — it's the shared premise every one of
+/// them that consumes a value (T-Debit's `e`, T-Convert's `e`, T-Absorb's `x`) needs
+/// checked the same way, so it lives here once rather than being re-derived from a
+/// bare `Ty` at each call site.
+pub fn consume_checked(
+    symbol: SymbolId,
+    span: Span,
+    expected: BindingKind,
+    ctx: &mut Context,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<(Span, CurrencyId)> {
+    match ctx.consume(symbol, span) {
+        ConsumeResult::Ok(consumed) if consumed.kind == expected => {
+            Some((consumed.currency_span, consumed.currency))
+        }
+        ConsumeResult::Ok(_) => {
+            diags.push(kind_mismatch(expected, span));
+            None
+        }
+        ConsumeResult::Reused(d) => {
+            diags.push(d);
+            None
+        }
+        ConsumeResult::NeverBound => None,
+    }
+}
+
+/// (T-Credit) `acct : Account<C>`, `Γ ⊢ n : Amount` ⟹ `Γ ⊢ credit(acct, n) : Money<C>`.
+/// `credit` is always where a value's currency is first fixed, so the caller uses its
+/// own span as the "currency established here" span — there is nothing earlier to
+/// forward from, unlike every other rule below.
+pub fn check_credit(
+    account_currency: CurrencyId,
+    currency: &CurrencyInfo,
+    amount: &DecimalLiteral,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<(Amount, CurrencyId)> {
+    let amount = lower_amount(amount, currency.scale, &currency.name, diags)?;
+    Some((amount, account_currency))
+}
+
+/// (T-Debit's `acct : Account<C>` premise, and T-Absorb's identical one — both
+/// operations require the value they discharge to share the target account's
+/// currency, checked the same way for either.) The rest of each rule (T-Debit's
+/// `Γ ⊢ e : Money<C>`, T-Absorb's `Γ ⊢ x : Residue<C>`) is already established by the
+/// caller before this runs, via `typeck_money_expr`/`consume_checked`.
+pub fn check_account_currency(
+    account: &AccountInfo,
+    currencies: &[CurrencyInfo],
+    value_currency: CurrencyId,
+    value_currency_span: Span,
+    use_span: Span,
+) -> Result<(), Diagnostic> {
+    if value_currency == account.currency {
+        Ok(())
+    } else {
+        Err(currency_mismatch(account, currencies, value_currency, value_currency_span, use_span))
+    }
+}
+
+/// (T-Convert) `Γ ⊢ e : Money<A>`, `rate : Rate<A, B>` ⟹
+/// `Γ ⊢ let (p, r) = convert(e, rate) : Money<B> ⊗ Residue<B>`. Returns `B`, the
+/// currency both `p` and `r` are bound at — the caller still does that binding itself
+/// (threading Γ is the driver's job, not a rule's).
+pub fn check_convert(
+    rate: &RateInfo,
+    currencies: &[CurrencyInfo],
+    money_currency: CurrencyId,
+    money_currency_span: Span,
+    convert_span: Span,
+) -> Result<CurrencyId, Diagnostic> {
+    if money_currency == rate.from {
+        Ok(rate.to)
+    } else {
+        Err(rate_currency_mismatch(rate, currencies, money_currency, money_currency_span, convert_span))
+    }
+}
+
+/// (T-Split's typeck-time half: `n : Amount`.) The side condition `0 ≤ n ≤ amount(e)`
+/// is checked in `eval`, not here (D-034) — `amount(e)` is a runtime quantity `typeck`
+/// never sees, so all this rule can do ahead of time is lower `n`'s literal at `e`'s
+/// currency's scale.
+pub fn check_split(
+    currency: &CurrencyInfo,
+    amount: &DecimalLiteral,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Amount> {
+    lower_amount(amount, currency.scale, &currency.name, diags)
+}
+
+/// (T-SplitRatio's side condition `p + q > 0`.) The allocation itself is exact by
+/// construction (largest-remainder, D-015) and computed in `eval`; this is the one
+/// static check `typeck` can make ahead of that.
+pub fn check_split_ratio(a_weight: u32, b_weight: u32, span: Span) -> Result<(), Diagnostic> {
+    if a_weight == 0 && b_weight == 0 {
+        Err(Diagnostic::new(
+            Code::ZeroRatio,
+            "split_ratio's weights are both zero, which doesn't determine an allocation",
+            span,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// (T-Merge) `Γ ⊢ a : Money<C>`, `Γ ⊢ b : Money<C>` ⟹ `Γ ⊢ merge(a, b) : Money<C>`.
+pub fn check_merge(
+    currencies: &[CurrencyInfo],
+    a_currency: CurrencyId,
+    a_span: Span,
+    b_currency: CurrencyId,
+    b_span: Span,
+    merge_span: Span,
+) -> Result<CurrencyId, Diagnostic> {
+    if a_currency == b_currency {
+        Ok(a_currency)
+    } else {
+        Err(merge_currency_mismatch(currencies, a_currency, a_span, b_currency, b_span, merge_span))
+    }
+}
+
+/// Lowers a decimal literal into an `Amount` at `scale`, reporting
+/// `TooManyFractionDigits`/`AmountOutOfRange` on failure (D-024, D-031). Shared by
+/// `T-Credit` and `T-Split` — both need a raw literal lowered at a currency's scale.
+fn lower_amount(
+    literal: &DecimalLiteral,
+    scale: u32,
+    currency_name: &str,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Amount> {
+    match Amount::from_literal(&literal.text, scale) {
+        Ok(amount) => Some(amount),
+        Err(LiteralError::TooManyFractionDigits(frac_digits)) => {
+            diags.push(Diagnostic::new(
+                Code::TooManyFractionDigits,
+                format!(
+                    "amount has {frac_digits} fractional digits, but currency '{currency_name}' has scale {scale}"
+                ),
+                literal.span,
+            ));
+            None
+        }
+        Err(LiteralError::OutOfRange) => {
+            diags.push(Diagnostic::new(
+                Code::AmountOutOfRange,
+                "this amount is too large to represent",
+                literal.span,
+            ));
+            None
+        }
+    }
+}
+
+fn kind_mismatch(expected: BindingKind, span: Span) -> Diagnostic {
+    match expected {
+        BindingKind::Money => Diagnostic::new(
+            Code::ExpectedMoney,
+            "this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it",
+            span,
+        ),
+        BindingKind::Residue => Diagnostic::new(
+            Code::ExpectedResidue,
+            "this is money, not a conversion residue — use 'debit', not 'absorb', to discharge it",
+            span,
+        ),
+    }
+}
+
+fn currency_mismatch(
+    account: &AccountInfo,
+    currencies: &[CurrencyInfo],
+    found: CurrencyId,
+    found_span: Span,
+    use_span: Span,
+) -> Diagnostic {
+    let expected_name = &currencies[account.currency.0 as usize].name;
+    let found_name = &currencies[found.0 as usize].name;
+    Diagnostic::new(
+        Code::CurrencyMismatch,
+        format!(
+            "account '{}' expects currency '{expected_name}', but this value is '{found_name}'",
+            account.path
+        ),
+        use_span,
+    )
+    .with_secondary("this value's currency was established here", found_span)
+}
+
+fn rate_currency_mismatch(
+    rate: &RateInfo,
+    currencies: &[CurrencyInfo],
+    found: CurrencyId,
+    found_span: Span,
+    convert_span: Span,
+) -> Diagnostic {
+    let expected_name = &currencies[rate.from.0 as usize].name;
+    let found_name = &currencies[found.0 as usize].name;
+    Diagnostic::new(
+        Code::CurrencyMismatch,
+        format!(
+            "rate '{}' expects currency '{expected_name}', but this money is '{found_name}'",
+            rate.name
+        ),
+        convert_span,
+    )
+    .with_secondary("this money's currency was established here", found_span)
+}
+
+fn merge_currency_mismatch(
+    currencies: &[CurrencyInfo],
+    a_currency: CurrencyId,
+    a_span: Span,
+    b_currency: CurrencyId,
+    b_span: Span,
+    merge_span: Span,
+) -> Diagnostic {
+    let a_name = &currencies[a_currency.0 as usize].name;
+    let b_name = &currencies[b_currency.0 as usize].name;
+    Diagnostic::new(
+        Code::CurrencyMismatch,
+        format!("merge's two values have different currencies: '{a_name}' and '{b_name}'"),
+        merge_span,
+    )
+    .with_secondary("this value's currency was established here", a_span)
+    .with_secondary("this value's currency was established here", b_span)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn etb() -> CurrencyInfo {
+        CurrencyInfo { name: "ETB".to_string(), scale: 2 }
+    }
+
+    fn usd() -> CurrencyInfo {
+        CurrencyInfo { name: "USD".to_string(), scale: 2 }
+    }
+
+    fn account(path: &str, currency: CurrencyId) -> AccountInfo {
+        AccountInfo {
+            path: path.to_string(),
+            currency,
+            kind: crate::resolve::AccountKind::Asset,
+            normal: crate::parse::ast::NormalBalance::Debit,
+        }
+    }
+
+    fn lit(text: &str) -> DecimalLiteral {
+        DecimalLiteral { text: text.to_string(), span: Span::new(0, text.len() as u32) }
+    }
+
+    #[test]
+    fn check_credit_lowers_the_amount_at_the_account_currency_scale() {
+        let mut diags = Vec::new();
+        let result = check_credit(CurrencyId(0), &etb(), &lit("45.00"), &mut diags);
+        assert!(diags.is_empty());
+        let (amount, currency) = result.unwrap();
+        assert_eq!(amount, Amount::from_literal("45.00", 2).unwrap());
+        assert_eq!(currency, CurrencyId(0));
+    }
+
+    #[test]
+    fn check_credit_rejects_too_many_fraction_digits() {
+        let mut diags = Vec::new();
+        let result = check_credit(CurrencyId(0), &etb(), &lit("45.123"), &mut diags);
+        assert!(result.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::TooManyFractionDigits);
+    }
+
+    #[test]
+    fn check_account_currency_accepts_a_matching_currency() {
+        let account = account("assets:cash", CurrencyId(0));
+        let result =
+            check_account_currency(&account, &[etb()], CurrencyId(0), Span::new(0, 1), Span::new(1, 2));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_account_currency_rejects_a_mismatched_currency() {
+        let account = account("assets:cash", CurrencyId(0));
+        let err = check_account_currency(
+            &account,
+            &[etb(), usd()],
+            CurrencyId(1),
+            Span::new(0, 1),
+            Span::new(1, 2),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, Code::CurrencyMismatch);
+        assert_eq!(err.secondary.len(), 1);
+    }
+
+    #[test]
+    fn check_merge_accepts_matching_currencies_and_rejects_mismatched_ones() {
+        let currencies = [etb(), usd()];
+        assert!(check_merge(&currencies, CurrencyId(0), Span::new(0, 1), CurrencyId(0), Span::new(1, 2), Span::new(2, 3))
+            .is_ok());
+        let err = check_merge(
+            &currencies,
+            CurrencyId(0),
+            Span::new(0, 1),
+            CurrencyId(1),
+            Span::new(1, 2),
+            Span::new(2, 3),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, Code::CurrencyMismatch);
+        assert_eq!(err.secondary.len(), 2);
+    }
+
+    #[test]
+    fn check_split_ratio_rejects_both_weights_zero_but_accepts_any_other_pair() {
+        assert!(check_split_ratio(0, 0, Span::new(0, 1)).is_err());
+        assert!(check_split_ratio(1, 0, Span::new(0, 1)).is_ok());
+        assert!(check_split_ratio(0, 1, Span::new(0, 1)).is_ok());
+        assert!(check_split_ratio(1, 2, Span::new(0, 1)).is_ok());
     }
 }
