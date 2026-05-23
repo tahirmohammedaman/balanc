@@ -1,3 +1,20 @@
-unknown_currency.bal:1:34: error[E_UNKNOWN_CURRENCY]: no currency named 'USD' is declared
-unknown_currency.bal:4:9: error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared
-unknown_currency.bal:4:33: error[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared
+error[E_UNKNOWN_CURRENCY]: no currency named 'USD' is declared
+  --> unknown_currency.bal:1:34
+  |
+1 | account assets:cash { currency = USD, kind = asset, normal = debit }
+  |                                  ^^^
+  = note: declare this currency with a 'currency NAME { scale = N }' block before referencing it
+
+error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared
+  --> unknown_currency.bal:4:9
+  |
+4 |   debit(expenses:coffee, credit(assets:cash, 45.00));
+  |         ^^^^^^^^^^^^^^^
+  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it
+
+error[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared
+  --> unknown_currency.bal:4:33
+  |
+4 |   debit(expenses:coffee, credit(assets:cash, 45.00));
+  |                                 ^^^^^^^^^^^
+  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it

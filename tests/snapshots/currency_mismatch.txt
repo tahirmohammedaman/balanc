@@ -1,2 +1,12 @@
-currency_mismatch.bal:9:3: error[E_CURRENCY_MISMATCH]: account 'expenses:coffee' expects currency 'ETB', but this value is 'USD'
-currency_mismatch.bal:8:11: note: this value's currency was established here
+error[E_CURRENCY_MISMATCH]: account 'expenses:coffee' expects currency 'ETB', but this value is 'USD'
+  --> currency_mismatch.bal:9:3
+  |
+9 |   debit(expenses:coffee, m);
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: money only moves between accounts, rates, or residues that share the same currency — use 'convert' to cross currencies
+
+note: this value's currency was established here
+  --> currency_mismatch.bal:8:11
+  |
+8 |   let m = credit(assets:usd_cash, 45.00);
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

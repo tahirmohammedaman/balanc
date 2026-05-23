@@ -1,1 +1,6 @@
-dropped_residue.bal:11:12: error[E_DROPPED]: this conversion residue is never consumed
+error[E_DROPPED]: this conversion residue is never consumed
+   --> dropped_residue.bal:11:12
+   |
+11 |   let (m2, r) = convert(m, usd_etb);
+   |            ^
+   = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'

@@ -1,2 +1,13 @@
-undeclared_account.bal:4:9: error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared
-undeclared_account.bal:4:33: error[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared
+error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared
+  --> undeclared_account.bal:4:9
+  |
+4 |   debit(expenses:coffee, credit(assets:cash, 45.00));
+  |         ^^^^^^^^^^^^^^^
+  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it
+
+error[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared
+  --> undeclared_account.bal:4:33
+  |
+4 |   debit(expenses:coffee, credit(assets:cash, 45.00));
+  |                                 ^^^^^^^^^^^
+  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it

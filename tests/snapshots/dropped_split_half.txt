@@ -1,1 +1,6 @@
-dropped_split_half.bal:8:11: error[E_DROPPED]: this money value is never consumed
+error[E_DROPPED]: this money value is never consumed
+  --> dropped_split_half.bal:8:11
+  |
+8 |   let (a, b) = split(m, 40.00);
+  |           ^
+  = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'

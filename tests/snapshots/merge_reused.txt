@@ -1,2 +1,12 @@
-merge_reused.bal:8:35: error[E_REUSED]: this value has already been consumed
-merge_reused.bal:8:32: note: first consumed here
+error[E_REUSED]: this value has already been consumed
+  --> merge_reused.bal:8:35
+  |
+8 |   debit(expenses:coffee, merge(m, m));
+  |                                   ^
+  = note: every money value bound in a transaction may only be consumed once — bind a new value instead of reusing this one
+
+note: first consumed here
+  --> merge_reused.bal:8:32
+  |
+8 |   debit(expenses:coffee, merge(m, m));
+  |                                ^

@@ -1,1 +1,6 @@
-amount_out_of_range.bal:7:46: error[E_AMOUNT_OUT_OF_RANGE]: this amount is too large to represent
+error[E_AMOUNT_OUT_OF_RANGE]: this amount is too large to represent
+  --> amount_out_of_range.bal:7:46
+  |
+7 |   debit(expenses:coffee, credit(assets:cash, 999999999999999999999999999999));
+  |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: this magnitude does not fit the fixed-point representation this language uses

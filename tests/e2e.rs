@@ -18,7 +18,7 @@ fn run_case(name: &str) {
     let file = SourceFile::new(format!("{name}.bal"), text);
     let output = match balanc::run(&file) {
         Ok(report) => report,
-        Err(diags) => diags,
+        Err(diags) => balanc::diag::render_all(&diags, &file),
     };
 
     let snapshot_path = snapshots_dir.join(format!("{name}.txt"));
@@ -126,4 +126,33 @@ fn splitting_more_than_available_reports_e_unbalanced() {
 #[test]
 fn split_ratio_with_zero_weights_reports_e_zero_ratio() {
     run_case("zero_ratio");
+}
+
+/// Invariant 6: no diagnostic ever carries a synthetic or zero span. Every span in
+/// this corpus's diagnostics should point at a real byte offset inside its file — a
+/// nonzero `hi` is enough to rule out a fabricated `Span::new(0, 0)` placeholder,
+/// since none of these fixtures are empty files.
+#[test]
+fn no_diagnostic_in_the_corpus_has_a_zero_or_synthetic_span() {
+    let cases_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases");
+    let mut checked = 0;
+    for entry in fs::read_dir(&cases_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("bal") {
+            continue;
+        }
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        let text = fs::read_to_string(&path).unwrap();
+        let file = SourceFile::new(format!("{name}.bal"), text);
+        if let Err(diags) = balanc::run(&file) {
+            checked += 1;
+            for d in &diags {
+                assert!(d.span.hi > 0, "{name}: {:?} has a zero span", d.code);
+                for (label, span) in &d.secondary {
+                    assert!(span.hi > 0, "{name}: {:?}'s {label:?} label has a zero span", d.code);
+                }
+            }
+        }
+    }
+    assert!(checked > 0, "expected at least one case in the corpus to produce diagnostics");
 }

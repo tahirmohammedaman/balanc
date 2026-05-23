@@ -1,1 +1,6 @@
-too_many_fraction_digits.bal:7:46: error[E_TOO_MANY_FRACTION_DIGITS]: amount has 2 fractional digits, but currency 'JPY' has scale 0
+error[E_TOO_MANY_FRACTION_DIGITS]: amount has 2 fractional digits, but currency 'JPY' has scale 0
+  --> too_many_fraction_digits.bal:7:46
+  |
+7 |   debit(expenses:coffee, credit(assets:cash, 45.50));
+  |                                              ^^^^^
+  = note: round the literal to the currency's declared scale, or declare the currency with a larger scale

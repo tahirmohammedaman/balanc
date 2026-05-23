@@ -1,1 +1,6 @@
-expected_money_found_residue.bal:14:29: error[E_EXPECTED_MONEY]: this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it
+error[E_EXPECTED_MONEY]: this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it
+   --> expected_money_found_residue.bal:14:29
+   |
+14 |   debit(income:fx_rounding, r);
+   |                             ^
+   = note: this binding holds a conversion residue — discharge it with 'absorb', not 'debit'

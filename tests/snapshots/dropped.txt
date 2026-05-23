@@ -1,1 +1,6 @@
-dropped.bal:6:7: error[E_DROPPED]: this money value is never consumed
+error[E_DROPPED]: this money value is never consumed
+  --> dropped.bal:6:7
+  |
+6 |   let m = credit(assets:cash, 45.00);
+  |       ^
+  = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'

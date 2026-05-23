@@ -1,1 +1,6 @@
-zero_ratio.bal:9:31: error[E_ZERO_RATIO]: split_ratio's weights are both zero, which doesn't determine an allocation
+error[E_ZERO_RATIO]: split_ratio's weights are both zero, which doesn't determine an allocation
+  --> zero_ratio.bal:9:31
+  |
+9 |   let (a, b) = split_ratio(m, 0, 0);
+  |                               ^^^^
+  = note: at least one of split_ratio's two weights must be nonzero
