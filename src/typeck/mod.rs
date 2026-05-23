@@ -1,18 +1,22 @@
 //! `resolve::ResolvedModule` -> `TModule` + `Diagnostic`s. The traversal driver: walks
 //! each transaction body left to right, threading Γ (`rules::Context`) through `let`,
-//! `convert`, `debit`, and `absorb` statements per the rules documented in `rules.rs`.
+//! `convert`, `debit`, and `absorb` statements, calling out to `rules.rs` for the
+//! actual premise of each typing rule (Checkpoint C) — this module owns dispatch
+//! (which `ResolvedStmt`/`ResolvedMoneyExpr` variant is this?), Γ-threading
+//! (`ctx.bind`/`rules::consume_checked`), and assembling the typed IR (`TStmt`/
+//! `TMoneyExpr`); `rules.rs` owns deciding whether a rule's premises hold and
+//! building the diagnostic when they don't.
 
 pub mod rules;
 
-use crate::amount::{Amount, LiteralError};
-use crate::diag::{Code, Diagnostic};
-use crate::parse::ast::DecimalLiteral;
+use crate::amount::Amount;
+use crate::diag::Diagnostic;
 use crate::resolve::{
     AccountId, AccountInfo, CurrencyId, CurrencyInfo, RateId, RateInfo, ResolvedModule,
     ResolvedMoneyExpr, ResolvedStmt, ResolvedTxn, SymbolId,
 };
 use crate::span::Span;
-use rules::{BindingKind, ConsumeResult, Context};
+use rules::{BindingKind, Context};
 pub use rules::Ty;
 
 pub struct TModule {
@@ -101,48 +105,47 @@ fn typeck_txn(
                 let (money, money_currency, currency_span) =
                     typeck_money_expr(money, accounts, currencies, &mut ctx, diags)?;
                 let rate_info = &rates[rate.0 as usize];
-                if money_currency != rate_info.from {
-                    diags.push(rate_currency_mismatch(
-                        rate_info,
-                        currencies,
-                        money_currency,
-                        currency_span,
-                        span,
-                    ));
-                    return None;
-                }
-                ctx.bind(primary, primary_span, span, rate_info.to, BindingKind::Money);
-                ctx.bind(residual, residual_span, span, rate_info.to, BindingKind::Residue);
+                let result_currency =
+                    match rules::check_convert(rate_info, currencies, money_currency, currency_span, span) {
+                        Ok(currency) => currency,
+                        Err(d) => {
+                            diags.push(d);
+                            return None;
+                        }
+                    };
+                ctx.bind(primary, primary_span, span, result_currency, BindingKind::Money);
+                ctx.bind(residual, residual_span, span, result_currency, BindingKind::Residue);
                 Some(TStmt::Convert { primary, residual, money, rate, span })
             }
             ResolvedStmt::Debit { account, value, span } => {
                 let (value, value_currency, currency_span) =
                     typeck_money_expr(value, accounts, currencies, &mut ctx, diags)?;
-                let account_currency = accounts[account.0 as usize].currency;
-                if value_currency != account_currency {
-                    diags.push(currency_mismatch(
-                        &accounts[account.0 as usize],
-                        currencies,
-                        value_currency,
-                        currency_span,
-                        span,
-                    ));
+                let account_info = &accounts[account.0 as usize];
+                if let Err(d) =
+                    rules::check_account_currency(account_info, currencies, value_currency, currency_span, span)
+                {
+                    diags.push(d);
                     return None;
                 }
                 Some(TStmt::Debit { account, value, span })
             }
             ResolvedStmt::Absorb { residue, residue_span, account, span } => {
-                let (currency_span, residue_currency) =
-                    consume_checked(residue, residue_span, BindingKind::Residue, &mut ctx, diags)?;
-                let account_currency = accounts[account.0 as usize].currency;
-                if residue_currency != account_currency {
-                    diags.push(currency_mismatch(
-                        &accounts[account.0 as usize],
-                        currencies,
-                        residue_currency,
-                        currency_span,
-                        span,
-                    ));
+                let (currency_span, residue_currency) = rules::consume_checked(
+                    residue,
+                    residue_span,
+                    BindingKind::Residue,
+                    &mut ctx,
+                    diags,
+                )?;
+                let account_info = &accounts[account.0 as usize];
+                if let Err(d) = rules::check_account_currency(
+                    account_info,
+                    currencies,
+                    residue_currency,
+                    currency_span,
+                    span,
+                ) {
+                    diags.push(d);
                     return None;
                 }
                 Some(TStmt::Absorb { residual: residue, account, span })
@@ -150,13 +153,8 @@ fn typeck_txn(
             ResolvedStmt::Split { a, a_span, b, b_span, money, amount, span } => {
                 let (money, money_currency, currency_span) =
                     typeck_money_expr(money, accounts, currencies, &mut ctx, diags)?;
-                let scale = currencies[money_currency.0 as usize].scale;
-                let lowered_amount = lower_amount(
-                    &amount,
-                    scale,
-                    &currencies[money_currency.0 as usize].name,
-                    diags,
-                )?;
+                let currency_info = &currencies[money_currency.0 as usize];
+                let lowered_amount = rules::check_split(currency_info, &amount, diags)?;
                 ctx.bind(a, a_span, currency_span, money_currency, BindingKind::Money);
                 ctx.bind(b, b_span, currency_span, money_currency, BindingKind::Money);
                 Some(TStmt::Split {
@@ -183,12 +181,8 @@ fn typeck_txn(
             } => {
                 let (money, money_currency, currency_span) =
                     typeck_money_expr(money, accounts, currencies, &mut ctx, diags)?;
-                if a_weight == 0 && b_weight == 0 {
-                    diags.push(Diagnostic::new(
-                        Code::ZeroRatio,
-                        "split_ratio's weights are both zero, which doesn't determine an allocation",
-                        a_weight_span.to(b_weight_span),
-                    ));
+                if let Err(d) = rules::check_split_ratio(a_weight, b_weight, a_weight_span.to(b_weight_span)) {
+                    diags.push(d);
                     return None;
                 }
                 ctx.bind(a, a_span, currency_span, money_currency, BindingKind::Money);
@@ -199,49 +193,6 @@ fn typeck_txn(
         .collect();
     diags.extend(ctx.finish_txn());
     TTxnDecl { name: txn.name, stmts, span: txn.span }
-}
-
-/// Consumes `symbol` from Γ and checks it was the expected kind (`Money` or
-/// `Residue`), reporting `E_EXPECTED_MONEY`/`E_EXPECTED_RESIDUE` if not (D-026). Shared
-/// by every consuming site (`debit`'s/`convert`'s money argument via
-/// `typeck_money_expr`, and `absorb`'s residue argument directly) so there is one
-/// place that turns "wrong kind of value" into a diagnostic.
-fn consume_checked(
-    symbol: SymbolId,
-    span: Span,
-    expected: BindingKind,
-    ctx: &mut Context,
-    diags: &mut Vec<Diagnostic>,
-) -> Option<(Span, CurrencyId)> {
-    match ctx.consume(symbol, span) {
-        ConsumeResult::Ok(consumed) if consumed.kind == expected => {
-            Some((consumed.currency_span, consumed.currency))
-        }
-        ConsumeResult::Ok(_) => {
-            diags.push(kind_mismatch(expected, span));
-            None
-        }
-        ConsumeResult::Reused(d) => {
-            diags.push(d);
-            None
-        }
-        ConsumeResult::NeverBound => None,
-    }
-}
-
-fn kind_mismatch(expected: BindingKind, span: Span) -> Diagnostic {
-    match expected {
-        BindingKind::Money => Diagnostic::new(
-            Code::ExpectedMoney,
-            "this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it",
-            span,
-        ),
-        BindingKind::Residue => Diagnostic::new(
-            Code::ExpectedResidue,
-            "this is money, not a conversion residue — use 'debit', not 'absorb', to discharge it",
-            span,
-        ),
-    }
 }
 
 /// Type-checks a `MoneyExpr`, returning its lowered IR, its currency (T-Credit's `C`,
@@ -257,15 +208,13 @@ fn typeck_money_expr(
     match expr {
         ResolvedMoneyExpr::Credit { account, amount, span } => {
             let info = &accounts[account.0 as usize];
-            let currency = info.currency;
-            let scale = currencies[currency.0 as usize].scale;
-            let amount =
-                lower_amount(&amount, scale, &currencies[currency.0 as usize].name, diags)?;
+            let currency_info = &currencies[info.currency.0 as usize];
+            let (amount, currency) = rules::check_credit(info.currency, currency_info, &amount, diags)?;
             Some((TMoneyExpr::Credit { account, amount }, currency, span))
         }
         ResolvedMoneyExpr::Var { symbol, span } => {
             let (currency_span, currency) =
-                consume_checked(symbol, span, BindingKind::Money, ctx, diags)?;
+                rules::consume_checked(symbol, span, BindingKind::Money, ctx, diags)?;
             Some((TMoneyExpr::Var { symbol }, currency, currency_span))
         }
         ResolvedMoneyExpr::Merge { a, b, span } => {
@@ -276,108 +225,16 @@ fn typeck_money_expr(
             let b_result = typeck_money_expr(*b, accounts, currencies, ctx, diags);
             let (a_expr, a_currency, a_span) = a_result?;
             let (b_expr, b_currency, b_span) = b_result?;
-            if a_currency != b_currency {
-                diags.push(merge_currency_mismatch(
-                    currencies, a_currency, a_span, b_currency, b_span, span,
-                ));
-                return None;
-            }
-            Some((TMoneyExpr::Merge { a: Box::new(a_expr), b: Box::new(b_expr) }, a_currency, span))
+            let currency = match rules::check_merge(currencies, a_currency, a_span, b_currency, b_span, span) {
+                Ok(currency) => currency,
+                Err(d) => {
+                    diags.push(d);
+                    return None;
+                }
+            };
+            Some((TMoneyExpr::Merge { a: Box::new(a_expr), b: Box::new(b_expr) }, currency, span))
         }
     }
-}
-
-/// Lowers a decimal literal into an `Amount` at `scale`, reporting
-/// `TooManyFractionDigits`/`AmountOutOfRange` on failure (D-024, D-031). Shared by
-/// `credit`'s amount (`typeck_money_expr`) and `split`'s (T-Split) — both are a raw
-/// literal that only needs a currency's scale to lower, known once the money value
-/// it's paired with has typechecked.
-fn lower_amount(
-    literal: &DecimalLiteral,
-    scale: u32,
-    currency_name: &str,
-    diags: &mut Vec<Diagnostic>,
-) -> Option<Amount> {
-    match Amount::from_literal(&literal.text, scale) {
-        Ok(amount) => Some(amount),
-        Err(LiteralError::TooManyFractionDigits(frac_digits)) => {
-            diags.push(Diagnostic::new(
-                Code::TooManyFractionDigits,
-                format!(
-                    "amount has {frac_digits} fractional digits, but currency '{currency_name}' has scale {scale}"
-                ),
-                literal.span,
-            ));
-            None
-        }
-        Err(LiteralError::OutOfRange) => {
-            diags.push(Diagnostic::new(
-                Code::AmountOutOfRange,
-                "this amount is too large to represent",
-                literal.span,
-            ));
-            None
-        }
-    }
-}
-
-fn merge_currency_mismatch(
-    currencies: &[CurrencyInfo],
-    a_currency: CurrencyId,
-    a_span: Span,
-    b_currency: CurrencyId,
-    b_span: Span,
-    merge_span: Span,
-) -> Diagnostic {
-    let a_name = &currencies[a_currency.0 as usize].name;
-    let b_name = &currencies[b_currency.0 as usize].name;
-    Diagnostic::new(
-        Code::CurrencyMismatch,
-        format!("merge's two values have different currencies: '{a_name}' and '{b_name}'"),
-        merge_span,
-    )
-    .with_secondary("this value's currency was established here", a_span)
-    .with_secondary("this value's currency was established here", b_span)
-}
-
-fn currency_mismatch(
-    account: &AccountInfo,
-    currencies: &[CurrencyInfo],
-    found: CurrencyId,
-    found_span: Span,
-    use_span: Span,
-) -> Diagnostic {
-    let expected_name = &currencies[account.currency.0 as usize].name;
-    let found_name = &currencies[found.0 as usize].name;
-    Diagnostic::new(
-        Code::CurrencyMismatch,
-        format!(
-            "account '{}' expects currency '{expected_name}', but this value is '{found_name}'",
-            account.path
-        ),
-        use_span,
-    )
-    .with_secondary("this value's currency was established here", found_span)
-}
-
-fn rate_currency_mismatch(
-    rate: &RateInfo,
-    currencies: &[CurrencyInfo],
-    found: CurrencyId,
-    found_span: Span,
-    convert_span: Span,
-) -> Diagnostic {
-    let expected_name = &currencies[rate.from.0 as usize].name;
-    let found_name = &currencies[found.0 as usize].name;
-    Diagnostic::new(
-        Code::CurrencyMismatch,
-        format!(
-            "rate '{}' expects currency '{expected_name}', but this money is '{found_name}'",
-            rate.name
-        ),
-        convert_span,
-    )
-    .with_secondary("this money's currency was established here", found_span)
 }
 
 #[cfg(test)]
