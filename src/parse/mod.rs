@@ -40,8 +40,20 @@
 //! takes an `AccountPath`/`Decimal`/`Ident`, never another `MoneyExpr`) — see
 //! `Parser::parse_money_expr`'s depth cap, `MAX_MONEY_EXPR_DEPTH`.
 //!
-//! No error recovery yet (Slice 6): the first unexpected token stops parsing and
-//! returns a single diagnostic, matching the lexer's fatal-error behaviour.
+//! **Error recovery (Slice 6).** A malformed `Decl` or `Stmt` no longer aborts the
+//! whole parse: `parse_module`'s loop and `parse_txn`'s statement loop each catch the
+//! `Err` locally, record its diagnostic, and resynchronise —
+//! `Parser::synchronize_decl` skips to the next `currency`/`account`/`rate`/`txn`
+//! keyword (or `Eof`), `Parser::synchronize_stmt` skips to the next `;`, `}`, or
+//! `let`/`debit`/`absorb` keyword — before continuing to parse whatever follows. This
+//! is deliberately coarse: the malformed `Decl`/`Stmt` itself is discarded rather than
+//! replaced with a placeholder AST node, since every diagnostic raised during recovery
+//! already carries the real span of the token that triggered it (invariant 6 asks for
+//! a real span on the *diagnostic*, not for the malformed node to survive into the
+//! tree) and `parse` returns `None` for the module whenever any diagnostics were
+//! recorded, so `resolve`/`typeck`/`eval` never see a partial `Decl`/`Stmt` either way
+//! (D-038). The payoff is purely diagnostic: a file with several independent syntax
+//! errors reports all of them in one run, sorted by span, instead of just the first.
 
 pub mod ast;
 
@@ -60,16 +72,23 @@ use ast::{
 const MAX_MONEY_EXPR_DEPTH: u32 = 256;
 
 pub fn parse(tokens: &[Token]) -> (Option<Module>, Vec<Diagnostic>) {
-    let mut p = Parser { tokens, pos: 0 };
-    match p.parse_module() {
-        Ok(module) => (Some(module), Vec::new()),
-        Err(diag) => (None, vec![diag]),
+    let mut p = Parser { tokens, pos: 0, diags: Vec::new() };
+    let module = p.parse_module();
+    if p.diags.is_empty() {
+        (Some(module), Vec::new())
+    } else {
+        (None, p.diags)
     }
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    /// Diagnostics recorded during recovery (see the module doc comment). A `PResult`
+    /// error returned all the way out of `parse_module` is a bug, not a user error —
+    /// `parse_module`'s own loop and `parse_txn`'s statement loop are the only two
+    /// places an `Err` is caught and folded in here instead of propagated with `?`.
+    diags: Vec<Diagnostic>,
 }
 
 type PResult<T> = Result<T, Diagnostic>;
@@ -104,21 +123,67 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_module(&mut self) -> PResult<Module> {
+    fn parse_module(&mut self) -> Module {
         let mut currencies = Vec::new();
         let mut accounts = Vec::new();
         let mut rates = Vec::new();
         let mut txns = Vec::new();
         while self.peek().kind != TokenKind::Eof {
-            match &self.peek().kind {
-                TokenKind::KwCurrency => currencies.push(self.parse_currency_decl()?),
-                TokenKind::KwAccount => accounts.push(self.parse_account_decl()?),
-                TokenKind::KwRate => rates.push(self.parse_rate_decl()?),
-                TokenKind::KwTxn => txns.push(self.parse_txn()?),
-                _ => return Err(self.unexpected("'currency', 'account', 'rate', or 'txn'")),
+            let result = match &self.peek().kind {
+                TokenKind::KwCurrency => self.parse_currency_decl().map(|d| currencies.push(d)),
+                TokenKind::KwAccount => self.parse_account_decl().map(|d| accounts.push(d)),
+                TokenKind::KwRate => self.parse_rate_decl().map(|d| rates.push(d)),
+                TokenKind::KwTxn => self.parse_txn().map(|d| txns.push(d)),
+                _ => Err(self.unexpected("'currency', 'account', 'rate', or 'txn'")),
+            };
+            if let Err(diag) = result {
+                self.diags.push(diag);
+                self.synchronize_decl();
             }
         }
-        Ok(Module { currencies, accounts, rates, txns })
+        Module { currencies, accounts, rates, txns }
+    }
+
+    /// Skips tokens until the next declaration keyword (or `Eof`), so one malformed
+    /// `currency`/`account`/`rate`/`txn` declaration doesn't stop the rest of the
+    /// module from being parsed.
+    fn synchronize_decl(&mut self) {
+        while !matches!(
+            self.peek().kind,
+            TokenKind::KwCurrency
+                | TokenKind::KwAccount
+                | TokenKind::KwRate
+                | TokenKind::KwTxn
+                | TokenKind::Eof
+        ) {
+            self.advance();
+        }
+    }
+
+    /// Skips tokens until (and including) the next `;`, or up to the next `}` or
+    /// statement keyword (`let`/`debit`/`absorb`) without consuming it, so one
+    /// malformed statement doesn't stop the rest of the transaction body from being
+    /// parsed. A `;` is the common case and is consumed since it already terminates
+    /// the broken statement; `}`/a statement keyword is left for the caller (the
+    /// txn-body loop, or `parse_module` if this statement's `;` never comes) to see
+    /// and act on itself.
+    fn synchronize_stmt(&mut self) {
+        loop {
+            match &self.peek().kind {
+                TokenKind::Semi => {
+                    self.advance();
+                    return;
+                }
+                TokenKind::RBrace
+                | TokenKind::Eof
+                | TokenKind::KwLet
+                | TokenKind::KwDebit
+                | TokenKind::KwAbsorb => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     fn parse_currency_decl(&mut self) -> PResult<CurrencyDecl> {
@@ -215,7 +280,13 @@ impl<'a> Parser<'a> {
             if self.peek().kind == TokenKind::Eof {
                 return Err(self.unexpected("'}'"));
             }
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(diag) => {
+                    self.diags.push(diag);
+                    self.synchronize_stmt();
+                }
+            }
         }
         let end = self.expect(&TokenKind::RBrace, "'}'")?;
         Ok(TxnDecl { name, stmts, span: start.to(end) })
@@ -721,5 +792,45 @@ mod tests {
         let (module, diags) = parse_src(&src);
         assert!(diags.is_empty(), "{diags:?}");
         assert!(module.is_some());
+    }
+
+    #[test]
+    fn three_independent_syntax_errors_are_all_reported_sorted_by_span() {
+        // Each error sits in a different declaration and doesn't touch the others: a
+        // missing '=' in the account decl, a bare literal where a MoneyExpr is
+        // required, and a missing ',' in a debit's argument list.
+        let (module, mut diags) = parse_src(
+            r#"
+            currency ETB { scale = 2 }
+            account assets:cash { currency ETB, kind = asset, normal = debit }
+            txn "t" {
+                let m = 5;
+                debit(expenses:coffee m);
+            }
+            "#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 3, "{diags:?}");
+        crate::diag::sort_by_span(&mut diags);
+        assert_eq!(diags[0].code, Code::ParseUnexpectedToken); // "currency ETB" missing '='
+        assert_eq!(diags[1].code, Code::ParseUnexpectedToken); // "let m = 5" not a MoneyExpr
+        assert_eq!(diags[2].code, Code::ParseUnexpectedToken); // "expenses:coffee m" missing ','
+        assert!(diags[0].span.lo < diags[1].span.lo);
+        assert!(diags[1].span.lo < diags[2].span.lo);
+    }
+
+    #[test]
+    fn recovery_after_a_bad_declaration_still_parses_the_next_one() {
+        // The malformed `account` decl (missing '=') is dropped entirely by recovery,
+        // but the well-formed `txn` after it still parses.
+        let (module, diags) = parse_src(
+            r#"
+            account assets:cash { currency ETB, kind = asset, normal = debit }
+            txn "t" { }
+            "#,
+        );
+        assert!(module.is_none());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, Code::ParseUnexpectedToken);
     }
 }
