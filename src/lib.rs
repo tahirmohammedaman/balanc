@@ -4,6 +4,7 @@
 //! drive, so the two can never disagree about what a given source file produces.
 
 pub mod amount;
+pub mod backend;
 pub mod diag;
 pub mod eval;
 pub mod lex;
