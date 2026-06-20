@@ -9,7 +9,11 @@
 //! - `code` — a `Code` attribute builder; every method this backend emits is
 //!   straight-line, so it never needs a `StackMapTable`.
 //! - `class` — assembles a complete `.class` file from a pool plus fields/methods.
+//! - `codegen` — walks a `TModule` and drives the above to produce one class's bytes.
 
 pub mod class;
 pub mod code;
+pub mod codegen;
 pub mod pool;
+
+pub use codegen::compile;
