@@ -17,10 +17,10 @@ pub mod typeck;
 use diag::{sort_by_span, Diagnostic};
 use span::SourceFile;
 
-/// Runs the full pipeline over one source file. `Ok` is the rendered trial balance;
-/// `Err` is the diagnostics that stopped the pipeline, sorted by span — callers render
-/// them as plain text (`diag::render_all`) or JSON (`diag::render_all_json`).
-pub fn run(file: &SourceFile) -> Result<String, Vec<Diagnostic>> {
+/// Runs the pipeline through `typeck` only — the shared front end both `run` (the
+/// interpreter) and the JVM backend (`backend::jvm::compile`, driven from `main`)
+/// build on; the two diverge only in what they do with the resulting `TModule`.
+pub fn compile_typed(file: &SourceFile) -> Result<typeck::TModule, Vec<Diagnostic>> {
     let (tokens, diags) = lex::lex(&file.text);
     let tokens = match tokens {
         Some(tokens) => tokens,
@@ -40,11 +40,17 @@ pub fn run(file: &SourceFile) -> Result<String, Vec<Diagnostic>> {
     };
 
     let (typed, diags) = typeck::typeck(resolved);
-    let typed = match typed {
-        Some(typed) => typed,
-        None => return Err(sorted(diags)),
-    };
+    match typed {
+        Some(typed) => Ok(typed),
+        None => Err(sorted(diags)),
+    }
+}
 
+/// Runs the full pipeline over one source file. `Ok` is the rendered trial balance;
+/// `Err` is the diagnostics that stopped the pipeline, sorted by span — callers render
+/// them as plain text (`diag::render_all`) or JSON (`diag::render_all_json`).
+pub fn run(file: &SourceFile) -> Result<String, Vec<Diagnostic>> {
+    let typed = compile_typed(file)?;
     let (ledger, diags) = eval::eval(&typed);
     let ledger = match ledger {
         Some(ledger) => ledger,
