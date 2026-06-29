@@ -13,6 +13,7 @@ export const NAV: NavGroup[] = [
     title: "Overview",
     items: [
       { path: "/docs/introduction", title: "Introduction" },
+      { path: "/docs/installation", title: "Installation" },
       { path: "/docs/getting-started", title: "Getting Started" },
     ],
   },

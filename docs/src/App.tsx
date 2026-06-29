@@ -3,6 +3,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { Landing } from "./pages/Landing";
 import { DocsLayout } from "./components/DocsLayout";
 import { Introduction } from "./pages/docs/Introduction";
+import { Installation } from "./pages/docs/Installation";
 import { GettingStarted } from "./pages/docs/GettingStarted";
 import { CoreConcepts } from "./pages/docs/CoreConcepts";
 import { SyntaxReference } from "./pages/docs/SyntaxReference";
@@ -26,6 +27,7 @@ export function App() {
           <Route path="/docs" element={<DocsLayout />}>
             <Route index element={<Navigate to="/docs/introduction" replace />} />
             <Route path="introduction" element={<Introduction />} />
+            <Route path="installation" element={<Installation />} />
             <Route path="getting-started" element={<GettingStarted />} />
             <Route path="language/core-concepts" element={<CoreConcepts />} />
             <Route path="language/syntax-reference" element={<SyntaxReference />} />

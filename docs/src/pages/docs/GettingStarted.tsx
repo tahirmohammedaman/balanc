@@ -7,8 +7,14 @@ export function GettingStarted() {
   return (
     <DocPage
       title="Getting Started"
-      lede="Everything below runs from the repository root. The interpreter only needs a Rust toolchain; the JVM backend additionally needs a JDK."
+      lede="Everything below runs from the repository root, building the interpreter straight from source. The interpreter only needs a Rust toolchain; the JVM backend additionally needs a JDK."
     >
+      <p>
+        Already just want the <C>balanc</C> binary rather than a clone of the repository? See{" "}
+        <Link to="/docs/installation">Installation</Link> for the prebuilt-binary and <C>cargo install</C>{" "}
+        options — then swap every <C>cargo run --</C> below for a direct <C>balanc</C> call.
+      </p>
+
       <DocTable
         columns={[{ header: "Requirement" }, { header: "Needed for" }]}
         rows={[
