@@ -25,6 +25,7 @@ This is a client-side-routed SPA (React Router with clean URLs, e.g. `/docs/gett
 
 - **Netlify** — `public/_redirects` (already included) handles this automatically. Build command `npm run build`, publish directory `dist`.
 - **Vercel** — `vercel.json` (already included) rewrites all paths to `index.html`. Framework preset "Vite" works out of the box.
+- **Cloudflare Workers** — `wrangler.jsonc` (already included) serves `dist/` as static assets with `not_found_handling: "single-page-application"`. Run `npm run build && npx wrangler deploy`.
 - **Cloudflare Pages** — build command `npm run build`, output directory `dist`; SPA fallback is automatic.
 - **GitHub Pages** — GitHub Pages has no server-side rewrite support, so a clean-URL `BrowserRouter` needs either a `404.html` redirect trick or switching `App.tsx` to `HashRouter`. Not configured here since GitHub Pages isn't the primary target.
 
