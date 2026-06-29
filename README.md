@@ -22,6 +22,17 @@ A tree-walking interpreter (`balanc::run`) and a JVM bytecode backend
 backend hand-writes `.class` bytes directly in Rust — no ASM, no bytecode-manipulation
 library — and packages the result as an ordinary, framework-free `.jar`.
 
+## Install
+
+```
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tahirmohammedaman/balanc/releases/latest/download/balanc-installer.sh | sh
+```
+
+Prebuilt binaries for Linux, macOS, and Windows are published on the
+[releases page](https://github.com/tahirmohammedaman/balanc/releases); see the
+Installation page in [`docs/`](docs/) for the Windows installer command and
+manual-download instructions.
+
 ## Build
 
 Requires a Rust toolchain. The JVM backend's tests and `--emit-jvm` additionally need

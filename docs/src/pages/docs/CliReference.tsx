@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { DocPage } from "../../components/DocPage";
 import { C, DocTable } from "../../components/Prose";
 import { CodeBlock, Terminal } from "../../components/code/CodeBlock";
@@ -22,6 +23,13 @@ export function CliReference() {
             <span className="code-col">--emit-jvm &lt;out.class&gt;</span>,
             "After a successful typecheck, additionally compiles the module to JVM bytecode and writes it to the given path. Additive, not a mode switch — the interpreter still runs and prints its report in the same invocation.",
           ],
+          [
+            <span className="code-col">--version</span>,
+            <>
+              Prints <C>balanc {"<version>"}</C> and exits immediately — before any other flag is read, so it
+              works even alongside a malformed invocation. <C>-V</C> is a short alias.
+            </>,
+          ],
           [<span className="code-col">&lt;file.bal&gt;</span>, "The source file to run (required, positional)."],
         ]}
       />
@@ -37,8 +45,15 @@ export function CliReference() {
           { type: "cmd", text: "cargo run -- examples/coffee.bal" },
           { type: "cmd", text: "cargo run -- examples/coffee.bal --emit-jvm Coffee.class" },
           { type: "cmd", text: "cargo run -- --json examples/coffee.bal" },
+          { type: "cmd", text: "balanc --version" },
         ]}
       />
+
+      <p>
+        These examples run the interpreter from inside the repository via <C>cargo run --</C>. Once{" "}
+        <C>balanc</C> is <Link to="/docs/installation">installed</Link> onto your <C>PATH</C>, drop the{" "}
+        <C>cargo run --</C> prefix and invoke it directly — e.g. <C>balanc examples/coffee.bal</C>.
+      </p>
     </DocPage>
   );
 }
