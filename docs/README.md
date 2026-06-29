@@ -23,7 +23,7 @@ npm run preview    # serve the production build locally
 
 This is a client-side-routed SPA (React Router with clean URLs, e.g. `/docs/getting-started`), so the host needs to fall back to `index.html` for unknown paths instead of 404ing.
 
-- **Netlify** — `public/_redirects` (already included) handles this automatically. Build command `npm run build`, publish directory `dist`.
+- **Netlify** — add a `public/_redirects` containing `/*  /index.html  200`. It is not included, because Cloudflare Workers also reads it and it conflicts with the Workers SPA fallback, causing a redirect loop. Build command `npm run build`, publish directory `dist`.
 - **Vercel** — `vercel.json` (already included) rewrites all paths to `index.html`. Framework preset "Vite" works out of the box.
 - **Cloudflare Workers** — `wrangler.jsonc` (already included) serves `dist/` as static assets with `not_found_handling: "single-page-application"`. Run `npm run build && npx wrangler deploy`.
 - **Cloudflare Pages** — build command `npm run build`, output directory `dist`; SPA fallback is automatic.
