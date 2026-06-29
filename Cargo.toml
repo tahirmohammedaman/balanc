@@ -1,11 +1,20 @@
 [package]
 name = "balanc"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 description = "A statically typed language for double-entry bookkeeping with linear money"
 license = "MIT"
+repository = "https://github.com/tahirmohammedaman/balanc"
 publish = false
+
+[package.metadata.dist]
+dist = true
 
 [dependencies]
 
 [dev-dependencies]
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

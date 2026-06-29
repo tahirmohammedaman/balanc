@@ -10,7 +10,10 @@ fn main() -> ExitCode {
     let mut path = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--json" {
+        if arg == "--version" || arg == "-V" {
+            println!("balanc {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        } else if arg == "--json" {
             json = true;
         } else if arg == "--emit-jvm" {
             emit_jvm = match args.next() {
