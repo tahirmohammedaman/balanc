@@ -24,6 +24,20 @@ The script fails if any code in `src/diag/codes.rs` has no program that
 triggers it (add one under `examples/errors/`). CI (`.github/workflows/docs.yml`)
 regenerates the file and fails if the committed copy is stale.
 
+## Playground (WebAssembly)
+
+`/playground` type-checks a snippet in the browser with the real compiler,
+compiled to `wasm32-unknown-unknown` from the `playground/` crate in the repo
+root. Build it before `npm run build`:
+
+```
+rustup target add wasm32-unknown-unknown
+npm run build:wasm                # = ../playground/build.sh
+```
+
+This writes `src/playground/pkg/` (gitignored). The page and the `.wasm` are
+lazy-loaded, so neither is in the landing bundle. See `playground/README.md`.
+
 ## Build
 
 ```
@@ -44,7 +58,9 @@ This is a client-side-routed SPA (React Router with clean URLs, e.g. `/docs/gett
 - **Cloudflare Pages** — build command `npm run build`, output directory `dist`; SPA fallback is automatic.
 - **GitHub Pages** — GitHub Pages has no server-side rewrite support, so a clean-URL `BrowserRouter` needs either a `404.html` redirect trick or switching `App.tsx` to `HashRouter`. Not configured here since GitHub Pages isn't the primary target.
 
-No build step depends on the Rust project — this directory can be copied out, given its own git remote, and deployed on its own.
+The only build step that depends on the Rust project is the playground's
+WebAssembly compiler (see below). Without it the site still builds and deploys
+on its own; `/playground` then says the compiler isn't included.
 
 ## Structure
 
@@ -57,6 +73,8 @@ src/
 ├── data/nav.ts               the sidebar's page tree (also drives prev/next + search)
 ├── data/programs.ts          typed access to outputs.generated.json
 ├── pages/Landing.tsx         marketing landing page ("/")
+├── pages/Playground.tsx      in-browser type-checker ("/playground", lazy-loaded)
+├── playground/compiler.ts    loads the wasm-bindgen output in playground/pkg/
 └── pages/docs/*.tsx          one component per documentation page, routed under "/docs/*"
 ```
 

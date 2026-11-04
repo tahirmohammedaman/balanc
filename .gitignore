@@ -16,3 +16,4 @@
 *.swp
 *~
 .DS_Store
+docs/src/playground/pkg/

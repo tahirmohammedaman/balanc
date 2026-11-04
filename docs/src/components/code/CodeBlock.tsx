@@ -23,7 +23,7 @@ function clipLines(text: string, clip: boolean): { text: string; clipped: boolea
   return { text: out, clipped };
 }
 
-interface LinesProps {
+export interface LinesProps {
   code: string;
   lang: CodeLang;
   numbered?: boolean;
@@ -33,7 +33,7 @@ interface LinesProps {
 
 /** The ruled body of every code surface: one row per line, optional
  * line-number gutter, and flagged lines (where a diagnostic points). */
-function Lines({ code, lang, numbered = false, primary, secondary }: LinesProps) {
+export function Lines({ code, lang, numbered = false, primary, secondary }: LinesProps) {
   const lines = useMemo(() => splitHighlightedLines(highlight(code, lang)), [code, lang]);
   return (
     <pre className={`code${numbered ? " numbered" : ""}`} data-lang={lang}>

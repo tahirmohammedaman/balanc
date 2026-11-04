@@ -45,7 +45,8 @@ one in a terminal.
 - 21 stable diagnostic codes in `src/diag/codes.rs`; each has a fixed `= note:` line.
 - Docs stack (confirmed): React + TypeScript + Vite SPA in `docs/`, deployed to
   Cloudflare Workers with SPA fallback; must stay buildable on its own.
-- Undecided: browser playground (WASM) is planned, not built.
+- Browser playground at `/playground`: the compiler built to WebAssembly from
+  `playground/` (a separate crate, so the core stays dependency-free).
 
 ## Brand Commitments
 

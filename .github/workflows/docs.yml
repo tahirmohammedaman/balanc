@@ -3,9 +3,9 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", "playground/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
   pull_request:
-    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", "playground/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
 
 permissions:
   contents: read
@@ -18,7 +18,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -30,6 +32,17 @@ jobs:
 
       - name: Build the compiler
         run: cargo build
+
+      # The playground's check() must print what `balanc --json` prints; this
+      # builds the CLI and compares the two over every example, byte for byte.
+      - name: Test the playground against the CLI
+        run: cargo test -p balanc-playground
+
+      # Compiles the playground crate to wasm32 and runs wasm-bindgen (the
+      # version pinned in Cargo.lock) into docs/src/playground/pkg, which the
+      # /playground route lazy-loads. Must run before the site build.
+      - name: Build the playground (WebAssembly)
+        run: playground/build.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -62,7 +75,11 @@ jobs:
 
       - name: Build
         working-directory: docs
-        run: npm run build
+        run: |
+          npm run build
+          # The playground degrades to a notice when the wasm is missing; in CI
+          # that would be a silent regression, so require it in the bundle.
+          ls dist/assets/*.wasm
 
       - uses: actions/upload-artifact@v4
         with:

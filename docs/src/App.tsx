@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "./context/ThemeContext";
 import { Landing } from "./pages/Landing";
@@ -18,12 +19,24 @@ import { Examples } from "./pages/docs/Examples";
 import { Glossary } from "./pages/docs/Glossary";
 import { NotFound } from "./pages/NotFound";
 
+// Lazy, so the playground and the WebAssembly compiler it loads stay out of the
+// landing and docs bundles.
+const Playground = lazy(() => import("./pages/Playground").then((m) => ({ default: m.Playground })));
+
 export function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Landing />} />
+          <Route
+            path="/playground"
+            element={
+              <Suspense fallback={null}>
+                <Playground />
+              </Suspense>
+            }
+          />
 
           <Route path="/docs" element={<DocsLayout />}>
             <Route index element={<Navigate to="/docs/introduction" replace />} />

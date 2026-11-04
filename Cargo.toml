@@ -10,6 +10,9 @@ publish = false
 [package.metadata.dist]
 dist = true
 
+[workspace]
+members = [".", "playground"]
+
 [dependencies]
 
 [dev-dependencies]

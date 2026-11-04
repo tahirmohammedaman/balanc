@@ -375,6 +375,22 @@ html {
     padding: 6px 7px;
   }
 }
+/* The tour is also first in the docs sidebar; drop it here before the
+ * Playground link can push the theme toggle off a phone screen. */
+@media (max-width: 480px) {
+  .nav-links .nav-tour {
+    display: none;
+  }
+}
+@media (max-width: 380px) {
+  .site-nav .wrap {
+    gap: 2px;
+  }
+  .nav-links a {
+    padding: 6px 5px;
+    font-size: 0.9rem;
+  }
+}
 
 /* ----------------------------------------------------------------- buttons */
 
@@ -1739,4 +1755,171 @@ pre.code[data-lang="out"] .hljs-number {
   border: 0;
   border-top: 1px solid var(--rule);
   margin: 32px 0;
+}
+
+/* ------------------------------------------------------------- playground */
+
+.pg {
+  padding-top: 40px;
+  padding-bottom: 64px;
+}
+.pg-head h1 {
+  font-size: clamp(2rem, 3.6vw, 2.6rem);
+  letter-spacing: -0.03em;
+  padding-bottom: 14px;
+  border-bottom: 3px double var(--rule-strong);
+  margin-bottom: 18px;
+}
+.pg-head .doc-lede {
+  max-width: 68ch;
+}
+.pg-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .pg-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.pg-grid > .code-block {
+  margin: 0;
+}
+
+.pg-src .code-head .path {
+  flex: none;
+}
+.pg-example {
+  min-width: 0;
+}
+.pg-example select {
+  width: 100%;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The editor: a transparent textarea over the same ruled lines ProgramBlock
+ * draws. Both share font, size, pitch and the line-number gutter's width, so
+ * the caret sits on the highlighted text. The wrapper scrolls; neither layer does. */
+.pg-editor {
+  position: relative;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.pg-editor pre.code {
+  overflow: visible;
+  min-height: calc(var(--line) * 14);
+}
+.pg-editor textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: calc(var(--line) * 0.5) 18px calc(var(--line) * 0.5) calc(3ch + 22px);
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: var(--line);
+  white-space: pre;
+  tab-size: 2;
+}
+.pg-editor textarea::selection {
+  background: color-mix(in oklch, var(--green) 26%, transparent);
+  color: transparent;
+}
+.pg-editor:has(textarea:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--green);
+}
+
+.pg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border-top: 3px double var(--rule-strong);
+  background: var(--paper-2);
+}
+.pg-actions .btn {
+  cursor: pointer;
+}
+.pg-actions .btn:disabled {
+  cursor: progress;
+  background: var(--paper);
+  color: var(--ink-3);
+  border-color: var(--rule-strong);
+}
+.pg-hint {
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+kbd {
+  font-size: 0.8em;
+  color: var(--ink-2);
+  padding: 1px 5px;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--paper);
+}
+
+.pg-out.is-err {
+  border-color: var(--red-rule);
+}
+.pg-out-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.pg-out-bar .seg button {
+  min-height: 30px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.pg-stale {
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+.pg-out.is-stale pre.code {
+  opacity: 0.55;
+  transition: opacity 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pg-out pre.code[data-lang="text"] .ln-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pg-out .copy-btn {
+  top: 48px;
+}
+.pg-empty {
+  margin: 0;
+  padding: 22px 18px;
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+.pg-empty.is-error {
+  color: var(--red);
+}
+.pg-foot {
+  margin-top: 28px;
+  color: var(--ink-2);
 }

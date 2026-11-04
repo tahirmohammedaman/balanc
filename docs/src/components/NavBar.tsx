@@ -21,11 +21,14 @@ export function NavBar({ leading, variant = "landing" }: NavBarProps) {
           balanc
         </NavLink>
         <div className="nav-links">
-          <NavLink to="/docs/tour">Tour</NavLink>
+          <NavLink to="/docs/tour" className={({ isActive }) => `nav-tour${isActive ? " active" : ""}`}>
+            Tour
+          </NavLink>
           <NavLink to="/docs/introduction" className={({ isActive }) => (isActive ? "active" : "")}>
             Docs
           </NavLink>
           <NavLink to="/docs/errors">Errors</NavLink>
+          <NavLink to="/playground">Playground</NavLink>
         </div>
         <div className="nav-spacer" />
         <a className="nav-gh" href="https://github.com/tahirmohammedaman/balanc">
