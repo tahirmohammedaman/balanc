@@ -1,328 +1,286 @@
-import type { ReactNode } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { NavBar } from "../components/NavBar";
 import { Footer } from "../components/Footer";
 import { PipelineDiagram } from "../components/PipelineDiagram";
-import { CodePanel } from "../components/code/CodeBlock";
-import { C } from "../components/Prose";
+import { ProgramBlock, CodeBlock } from "../components/code/CodeBlock";
+import { CopyButton } from "../components/code/CopyButton";
+import { C, Rule } from "../components/Prose";
+import { program, terminalText, COMPILER_VERSION } from "../data/programs";
 
-const COFFEE_SRC = `currency ETB { scale = 2 }
+const INSTALL =
+  "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tahirmohammedaman/balanc/releases/latest/download/balanc-installer.sh | sh";
 
-account assets:cash { currency = ETB, kind = asset, normal = debit }
-account expenses:coffee { currency = ETB, kind = expense, normal = debit }
+interface Folio {
+  id: string;
+  tab: string;
+  path: string;
+  verdict: string;
+}
 
-txn "coffee" {
-  let m = credit(assets:cash, 45.00);
-  debit(expenses:coffee, m);
-}`;
+/** The hero's three takes on one 45.00 ETB purchase. */
+const FOLIOS: Folio[] = [
+  {
+    id: "twice",
+    tab: "Spend it twice",
+    path: "examples/coffee_twice.bal",
+    verdict: "One credit of 45.00, two debits of the same value. In most ledgers that's a reconciliation ticket. Here it's E_REUSED, and the compiler points at both uses.",
+  },
+  {
+    id: "forget",
+    tab: "Forget it",
+    path: "examples/coffee_forgotten.bal",
+    verdict: "Money leaves assets:cash and goes nowhere. A linear value has to be consumed before the transaction closes, so this is E_DROPPED.",
+  },
+  {
+    id: "split",
+    tab: "Split it",
+    path: "examples/coffee_split.bal",
+    verdict: "split(m, 30.00) consumes m and hands back two values that sum to it. Both are debited once. It compiles, runs, and the trial balance closes.",
+  },
+];
 
-const COFFEE_OUTPUT = `Trial Balance (ETB)
-  assets:cash                    -45.00
-  expenses:coffee                 45.00
-  Debit total                      0.00
-  Credit total                     0.00`;
+function LedgerSheet() {
+  const [active, setActive] = useState(FOLIOS[0]!.id);
+  const base = useId();
+  const folio = FOLIOS.find((f) => f.id === active) ?? FOLIOS[0]!;
 
-function FeatureIcon({ path }: { path: ReactNode }) {
+  function onKey(e: React.KeyboardEvent<HTMLButtonElement>, i: number) {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const next = FOLIOS[(i + (e.key === "ArrowRight" ? 1 : FOLIOS.length - 1)) % FOLIOS.length]!;
+    setActive(next.id);
+    document.getElementById(`${base}-tab-${next.id}`)?.focus();
+  }
+
   return (
-    <div className="icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        {path}
-      </svg>
-    </div>
+    <section className="sheet" aria-label="One purchase, three ways">
+      <div className="folio-tabs" role="tablist" aria-label="Choose a version of the transaction">
+        {FOLIOS.map((f, i) => {
+          const ok = program(f.path).exit === 0;
+          return (
+            <button
+              key={f.id}
+              id={`${base}-tab-${f.id}`}
+              role="tab"
+              type="button"
+              aria-selected={f.id === active}
+              aria-controls={`${base}-panel`}
+              tabIndex={f.id === active ? 0 : -1}
+              className={`folio-tab ${ok ? "ok" : "err"}`}
+              onClick={() => setActive(f.id)}
+              onKeyDown={(e) => onKey(e, i)}
+            >
+              <span className="folio-mark" aria-hidden="true" />
+              {f.tab}
+            </button>
+          );
+        })}
+      </div>
+      <div className="sheet-body" role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${folio.id}`}>
+        <ProgramBlock key={folio.path} path={folio.path} />
+        <p className="sheet-verdict">{folio.verdict}</p>
+      </div>
+    </section>
   );
 }
 
-function FeatureCard({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
-  return (
-    <div className="card">
-      <FeatureIcon path={icon} />
-      <h3>{title}</h3>
-      <p>{children}</p>
-    </div>
-  );
+interface Invariant {
+  rule: string;
+  detail: React.ReactNode;
+  codes: string[];
 }
 
-function FrameRow({ term, children }: { term: string; children: ReactNode }) {
-  return (
-    <div className="frame-row">
-      <span className="term">{term}</span>
-      <p>{children}</p>
-    </div>
-  );
-}
-
-function OpTourCard({
-  name,
-  tone,
-  children,
-}: {
-  name: string;
-  tone: "green" | "red" | "blue";
-  children: ReactNode;
-}) {
-  return (
-    <div className="card op-tour-card">
-      <span className={`badge badge-${tone}`}>{name}</span>
-      <p style={{ marginTop: 12 }}>{children}</p>
-    </div>
-  );
-}
+const INVARIANTS: Invariant[] = [
+  {
+    rule: "Consumed exactly once",
+    detail: (
+      <>
+        Every <C>Money</C> value bound in a transaction is consumed by exactly one <C>debit</C>, <C>split</C>,{" "}
+        <C>split_ratio</C>, <C>merge</C>, or <C>convert</C>. Leftovers and second uses are both type errors.
+      </>
+    ),
+    codes: ["E_DROPPED", "E_REUSED"],
+  },
+  {
+    rule: "Currency is part of the type",
+    detail: (
+      <>
+        <C>Money&lt;USD&gt;</C> cannot reach an ETB account. Crossing currencies takes a declared <C>rate</C>, and{" "}
+        <C>convert</C> hands back the rounding residue as a value you must <C>absorb</C>.
+      </>
+    ),
+    codes: ["E_CURRENCY_MISMATCH", "E_EXPECTED_RESIDUE"],
+  },
+  {
+    rule: "Splits conserve the total",
+    detail: (
+      <>
+        <C>split</C> and <C>split_ratio</C> return two values that sum to the input. The one check that needs a
+        runtime amount (splitting off more than exists) is made by the evaluator.
+      </>
+    ),
+    codes: ["E_UNBALANCED", "E_ZERO_RATIO"],
+  },
+  {
+    rule: "Amounts fit their currency",
+    detail: (
+      <>
+        A literal can't carry more decimal places than its currency's <C>scale</C>, and there is no negative
+        literal to write in the first place.
+      </>
+    ),
+    codes: ["E_TOO_MANY_FRACTION_DIGITS", "E_AMOUNT_OUT_OF_RANGE"],
+  },
+];
 
 export function Landing() {
+  const split = program("examples/coffee_split.bal");
   return (
     <>
       <NavBar variant="landing" />
 
-      <header className="hero">
-        <div className="wrap">
-          <span className="eyebrow">
-            <span className="dot" /> interpreter + JVM backend, differentially tested to agree
-          </span>
-          <h1>
-            The ledger balances
-            <br />
-            because it <span className="hl">has to</span> — not because someone checked.
-          </h1>
-          <p className="lede">
-            balanc is a statically typed language for double-entry bookkeeping. Money is a <strong>linear</strong>{" "}
-            value: every unit must be consumed exactly once. Dropping it, duplicating it, or writing a
-            transaction whose debits and credits disagree isn't a bug you find later — it's a compile error.
-          </p>
-          <div className="hero-ctas">
-            <Link className="btn btn-primary" to="/docs/getting-started">
-              Get started →
-            </Link>
-            <Link className="btn btn-secondary" to="/docs/language/core-concepts">
-              Read the language guide
-            </Link>
-          </div>
-
-          <CodePanel
-            fileLabel="examples/coffee.bal"
-            code={COFFEE_SRC}
-            lang="bal"
-            outputLabel="$ cargo run -- examples/coffee.bal"
-            output={COFFEE_OUTPUT}
-          />
-
-          <div className="stat-strip">
-            <div className="stat">
-              <b>7</b>
-              <span>money operations</span>
+      <main id="main">
+        <header className="hero">
+          <div className="wrap">
+            <h1>
+              Money is a linear resource.
+              <span className="h1-sub">Spend it twice and it doesn’t compile.</span>
+            </h1>
+            <div className="hero-row">
+              <p className="lede">
+                balanc is a statically typed language for double-entry bookkeeping. Every money value must be
+                consumed exactly once, so dropped, duplicated, and silently converted money are compile errors with
+                stable codes, not month-end reconciliation tickets.
+              </p>
+              <div className="hero-actions">
+                <Link className="btn btn-primary" to="/docs/tour">
+                  Take the language tour
+                </Link>
+                <Link className="btn btn-secondary" to="/docs/installation">
+                  Install
+                </Link>
+              </div>
             </div>
-            <div className="stat">
-              <b>21</b>
-              <span>stable diagnostic codes</span>
-            </div>
-            <div className="stat">
-              <b>2</b>
-              <span>backends, one typed IR</span>
-            </div>
-            <div className="stat">
-              <b>0</b>
-              <span>runtime dependencies</span>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head">
-            <div className="section-kicker">Why balanc</div>
-            <h2>Accounting bugs, moved from runtime to compile time</h2>
-            <p>
-              Most ledger software checks balance with a post-hoc assertion — a test, a reconciliation job, a
-              monitoring alert. balanc makes the check structural: there is no program you can write in which
-              money silently appears, vanishes, or gets counted twice.
+            <LedgerSheet />
+            <p className="provenance">
+              Every program and every line of output on this site is produced by running <C>{COMPILER_VERSION}</C>{" "}
+              over the files in <C>examples/</C> and <C>tests/cases/</C>. Nothing is retyped by hand.
             </p>
           </div>
-          <div className="grid grid-4">
-            <FeatureCard
-              title="Money is linear"
-              icon={
-                <>
-                  <path d="M9 12l2 2 4-4" />
-                  <circle cx="12" cy="12" r="9" />
-                </>
-              }
-            >
-              Every <C>Money</C> value must be consumed exactly once. Drop it and you get <C>E_DROPPED</C>; reuse
-              it and you get <C>E_REUSED</C> — both are compile-time diagnostics, not production incidents.
-            </FeatureCard>
-            <FeatureCard
-              title="Currency is a type"
-              icon={
-                <>
-                  <rect x="3" y="3" width="8" height="8" rx="1.5" />
-                  <rect x="13" y="13" width="8" height="8" rx="1.5" />
-                  <path d="M11 7h6a2 2 0 0 1 2 2v4M13 17H7a2 2 0 0 1-2-2v-4" />
-                </>
-              }
-            >
-              <C>Money&lt;ETB&gt;</C> and <C>Money&lt;USD&gt;</C> are distinct types that can't be mixed. Crossing
-              currencies takes an explicit <C>rate</C> and produces an accounted-for rounding <C>Residue</C> —
-              never a silent truncation.
-            </FeatureCard>
-            <FeatureCard
-              title="Two backends, one truth"
-              icon={
-                <>
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                  <path d="M4 10h16M10 4v16" />
-                </>
-              }
-            >
-              The same typed program runs on a tree-walking interpreter or compiles to a hand-written JVM{" "}
-              <C>.class</C> file. Both are differentially tested to produce byte-identical trial balances.
-            </FeatureCard>
-            <FeatureCard
-              title="Exact, never float"
-              icon={
-                <>
-                  <path d="M12 3v18M5 8l7-5 7 5M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
-                </>
-              }
-            >
-              Amounts are fixed-point integers in the currency's minor unit. <C>f64</C> can't represent 0.10
-              exactly, and this language's whole premise depends on arithmetic that can't drift.
-            </FeatureCard>
-          </div>
-        </div>
-      </section>
+        </header>
 
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head">
-            <div className="section-kicker">Two audiences, one language</div>
-            <h2>Reads like a type system. Balances like a ledger.</h2>
-            <p>
-              balanc's constructs map directly onto ordinary double-entry bookkeeping — the type checker is just
-              enforcing rules an accountant already relies on, made explicit enough for a compiler to verify.
+        <section className="section">
+          <div className="wrap">
+            <div className="section-head">
+              <h2>What the type checker rules out</h2>
+              <p>
+                Ledger code usually checks these with a test, a reconciliation job, or an alert. In balanc they are
+                properties of every program that compiles.
+              </p>
+            </div>
+            <div className="ledger-table" role="table" aria-label="Invariants and their diagnostic codes">
+              <div className="lt-row lt-head" role="row">
+                <span role="columnheader">Invariant</span>
+                <span role="columnheader">What it means</span>
+                <span role="columnheader">Rejected with</span>
+              </div>
+              {INVARIANTS.map((inv) => (
+                <div className="lt-row" role="row" key={inv.rule}>
+                  <span className="lt-rule" role="cell">
+                    {inv.rule}
+                  </span>
+                  <span className="lt-detail" role="cell">
+                    {inv.detail}
+                  </span>
+                  <span className="lt-codes" role="cell">
+                    {inv.codes.map((c) => (
+                      <Link key={c} className="err-code" to={`/docs/errors#${c}`}>
+                        {c}
+                      </Link>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="section-foot">
+              <Link to="/docs/errors">All 21 diagnostic codes, each with a program that triggers it →</Link>
             </p>
           </div>
-          <div className="frame-cols">
-            <div className="frame-col dev">
-              <span className="frame-tag">FOR DEVELOPERS</span>
-              <FrameRow term="Money<C>">
-                A linear value, parameterized by currency — think an affine/linear type, checked the same way a
-                borrow checker tracks ownership.
-              </FrameRow>
-              <FrameRow term="Γ ⊢ e : T">
-                The type context is literally the set of live, not-yet-consumed bindings in the current
-                transaction body.
-              </FrameRow>
-              <FrameRow term="Δ = ∅">
-                "No dropped values" is the closing premise of every transaction — the compiler proves it, not a
-                test suite.
-              </FrameRow>
-              <FrameRow term="TModule">
-                One typed IR feeds both an interpreter and a hand-written JVM bytecode emitter — no separate
-                "compiler" and "runtime" model to keep in sync.
-              </FrameRow>
+        </section>
+
+        <section className="section">
+          <div className="wrap">
+            <div className="section-head">
+              <h2>Two ways to read the same program</h2>
             </div>
-            <div className="frame-col fin">
-              <span className="frame-tag">FOR FINTECH &amp; ACCOUNTING</span>
-              <FrameRow term="Money<C>">
-                A unit of currency that exists in exactly one place at a time — you can move it, split it, or
-                convert it, but never copy it or lose track of it.
-              </FrameRow>
-              <FrameRow term="credit / debit">
-                The same double-entry primitives from any ledger — <C>credit</C> takes money out of an account,{" "}
-                <C>debit</C> puts it into one.
-              </FrameRow>
-              <FrameRow term="unbalanced txn">
-                A transaction where debits and credits don't agree simply doesn't compile — there's no
-                "unbalanced" state a ledger can ever be left in.
-              </FrameRow>
-              <FrameRow term="trial balance">
-                Running a program produces the same report a bookkeeper would draw up by hand: accounts grouped
-                by kind, debit and credit subtotals.
-              </FrameRow>
+            <div className="two-readings">
+              <div className="reading">
+                <h3>If you write type systems</h3>
+                <p>
+                  The checker threads a linear context Γ through the transaction body. <C>credit</C> introduces a
+                  binding, every other operation consumes one, and the body must leave nothing behind.
+                </p>
+                <Rule premises={"Γ ⊢ e : Money<C>    acct : Account<C>"} name="T-Debit" conclusion={"Γ ⊢ debit(acct, e) : Effect    (consumes e)"} />
+                <Rule premises={"Γ ⊢ body ⇒ Δ    Δ = ∅"} name="T-Txn" conclusion={"⊢ txn { body } : Txn"} />
+                <p>
+                  Currency is a phantom parameter: it exists for the checker and is erased before either backend
+                  runs. <Link to="/docs/language/type-system">The full rule set →</Link>
+                </p>
+              </div>
+              <div className="reading">
+                <h3>If you keep books</h3>
+                <p>
+                  <C>credit</C> takes money out of an account; <C>debit</C> puts it into one. The split purchase above
+                  posts one credit and two debits, and the interpreter prints the trial balance:
+                </p>
+                <CodeBlock code={terminalText(split)} lang="out" label={split.command} numbered={false} />
+                <p>
+                  Accounts carry a declared currency, kind, and normal balance, and an unbalanced entry is not a
+                  program you can write. <Link to="/docs/language/core-concepts">Core concepts →</Link>
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head">
-            <div className="section-kicker">Under the hood</div>
-            <h2>One typed IR, two ways to run it</h2>
-            <p>
-              Source text passes through six stages to a typed module (<C>TModule</C>), which the tree-walking
-              interpreter evaluates directly and the JVM backend compiles to bytecode — nothing type-related
-              lives downstream of <C>typeck</C> in either path.
+        <section className="section">
+          <div className="wrap">
+            <div className="section-head">
+              <h2>One typed IR, two backends</h2>
+              <p>
+                A zero-dependency Rust front end lowers to a typed IR. A tree-walking interpreter runs it, and a JVM
+                backend writes <C>.class</C> bytes by hand, with no ASM and no bytecode library, packaged as a plain{" "}
+                <C>.jar</C>.
+              </p>
+            </div>
+            <PipelineDiagram />
+            <p className="section-foot">
+              <Link to="/docs/architecture/compiler">Compiler architecture →</Link>
+              <Link to="/docs/architecture/jvm-backend">Inside the JVM backend →</Link>
             </p>
           </div>
-          <PipelineDiagram />
-          <p style={{ marginTop: 16, fontSize: 13.5 }}>
-            See the full <Link to="/docs/architecture/compiler">compiler architecture</Link> and{" "}
-            <Link to="/docs/architecture/jvm-backend">JVM backend</Link> writeups for how each stage works.
-          </p>
-        </div>
-      </section>
+        </section>
 
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head">
-            <div className="section-kicker">Seven operations, closed set</div>
-            <h2>Every way to move money, in one screenful</h2>
-            <p>
-              There is no escape hatch — no unsafe block, no runtime cast. If a program type-checks, it was built
-              entirely from these seven operations.
+        <section className="section install-band">
+          <div className="wrap">
+            <div className="section-head">
+              <h2>Install</h2>
+              <p>
+                Prebuilt binaries for Linux, macOS, and Windows are on the releases page. On Linux and macOS:
+              </p>
+            </div>
+            <div className="install-line">
+              <code>{INSTALL}</code>
+              <CopyButton text={INSTALL} />
+            </div>
+            <p className="section-foot">
+              <Link to="/docs/installation">Windows and manual downloads →</Link>
+              <Link to="/docs/tour">Then take the tour →</Link>
             </p>
           </div>
-          <div className="grid grid-4">
-            <OpTourCard name="credit" tone="green">
-              Takes money out of an account, producing a fresh <C>Money&lt;C&gt;</C>.
-            </OpTourCard>
-            <OpTourCard name="debit" tone="red">
-              Puts money into an account, consuming it.
-            </OpTourCard>
-            <OpTourCard name="convert" tone="blue">
-              Crosses currencies via a declared <C>rate</C>, returning the converted amount plus a{" "}
-              <C>Residue</C>.
-            </OpTourCard>
-            <OpTourCard name="absorb" tone="red">
-              Discharges a <C>Residue</C> into an account — the only thing that can consume one.
-            </OpTourCard>
-            <OpTourCard name="split" tone="blue">
-              Peels an exact amount off a value, checked against the value's actual size at runtime.
-            </OpTourCard>
-            <OpTourCard name="split_ratio" tone="blue">
-              Divides a value by ratio, exact by construction via largest-remainder allocation.
-            </OpTourCard>
-            <OpTourCard name="merge" tone="red">
-              Combines two same-currency values into one.
-            </OpTourCard>
-            <Link to="/docs/language/operations-reference" className="card" style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", gap: 6 }}>
-              <span style={{ fontWeight: 650, fontSize: 14.5, color: "var(--accent)" }}>Full reference →</span>
-              <span style={{ fontSize: 13, color: "var(--text-faint)" }}>Signatures, examples, and every checked precondition.</span>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="cta-band">
-        <div className="wrap">
-          <div>
-            <h2>See a real bug get caught before it runs.</h2>
-            <p>The five-minute walkthrough builds the coffee example, then breaks it on purpose.</p>
-          </div>
-          <div className="hero-ctas">
-            <Link className="btn btn-primary" to="/docs/getting-started">
-              Get started
-              <svg className="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-            </Link>
-            <Link className="btn btn-secondary" to="/docs/introduction">
-              Read the introduction
-            </Link>
-          </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
       <Footer />
     </>

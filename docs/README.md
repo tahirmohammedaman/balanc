@@ -9,6 +9,35 @@ npm install
 npm run dev
 ```
 
+## Compiler output
+
+Every program and every line of compiler output on the site is read from
+`src/data/outputs.generated.json`, produced by running the real compiler over
+`examples/**/*.bal` and `tests/cases/*.bal`:
+
+```
+cargo build                      # in the repo root
+npm run gen:outputs              # in docs/
+```
+
+The script fails if any code in `src/diag/codes.rs` has no program that
+triggers it (add one under `examples/errors/`). CI (`.github/workflows/docs.yml`)
+regenerates the file and fails if the committed copy is stale.
+
+## Playground (WebAssembly)
+
+`/playground` type-checks a snippet in the browser with the real compiler,
+compiled to `wasm32-unknown-unknown` from the `playground/` crate in the repo
+root. Build it before `npm run build`:
+
+```
+rustup target add wasm32-unknown-unknown
+npm run build:wasm                # = ../playground/build.sh
+```
+
+This writes `src/playground/pkg/` (gitignored). The page and the `.wasm` are
+lazy-loaded, so neither is in the landing bundle. See `playground/README.md`.
+
 ## Build
 
 ```
@@ -29,7 +58,9 @@ This is a client-side-routed SPA (React Router with clean URLs, e.g. `/docs/gett
 - **Cloudflare Pages** — build command `npm run build`, output directory `dist`; SPA fallback is automatic.
 - **GitHub Pages** — GitHub Pages has no server-side rewrite support, so a clean-URL `BrowserRouter` needs either a `404.html` redirect trick or switching `App.tsx` to `HashRouter`. Not configured here since GitHub Pages isn't the primary target.
 
-No build step depends on the Rust project — this directory can be copied out, given its own git remote, and deployed on its own.
+The only build step that depends on the Rust project is the playground's
+WebAssembly compiler (see below). Without it the site still builds and deploys
+on its own; `/playground` then says the compiler isn't included.
 
 ## Structure
 
@@ -38,10 +69,16 @@ src/
 ├── App.tsx                 route table
 ├── context/ThemeContext.tsx  dark/light theme, persisted to localStorage
 ├── components/              shared UI: nav, sidebar, code blocks, doc-page chrome
-│   └── code/                 hand-written syntax tokenizer + CodeBlock/Terminal
+│   └── code/                 highlight.js grammars (hljs-balanc.ts) + CodeBlock/Terminal/ProgramBlock
 ├── data/nav.ts               the sidebar's page tree (also drives prev/next + search)
+├── data/programs.ts          typed access to outputs.generated.json
 ├── pages/Landing.tsx         marketing landing page ("/")
+├── pages/Playground.tsx      in-browser type-checker ("/playground", lazy-loaded)
+├── playground/compiler.ts    loads the wasm-bindgen output in playground/pkg/
 └── pages/docs/*.tsx          one component per documentation page, routed under "/docs/*"
 ```
 
-Every code sample is authored as a plain string and highlighted client-side by a small regex-based tokenizer (`src/components/code/tokenize.ts`) — no highlighting library, matching the source project's own zero-dependency approach where it reasonably applies to a docs site.
+Code is highlighted with highlight.js core. `src/components/code/hljs-balanc.ts`
+defines two grammars, `balanc` (`.bal` source, token set mirroring
+`src/lex/mod.rs`) and `balanc-output` (diagnostics and trial balances), as plain
+`LanguageFn`s usable in any highlight.js setup.

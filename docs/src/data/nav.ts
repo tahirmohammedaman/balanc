@@ -15,6 +15,7 @@ export const NAV: NavGroup[] = [
       { path: "/docs/introduction", title: "Introduction" },
       { path: "/docs/installation", title: "Installation" },
       { path: "/docs/getting-started", title: "Getting Started" },
+      { path: "/docs/tour", title: "Language Tour" },
     ],
   },
   {
@@ -29,7 +30,7 @@ export const NAV: NavGroup[] = [
   {
     title: "Reference",
     items: [
-      { path: "/docs/diagnostics", title: "Diagnostics" },
+      { path: "/docs/errors", title: "Error Catalogue" },
       { path: "/docs/architecture/compiler", title: "Compiler Architecture" },
       { path: "/docs/architecture/jvm-backend", title: "JVM Backend" },
       { path: "/docs/cli-reference", title: "CLI Reference" },

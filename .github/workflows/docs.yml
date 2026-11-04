@@ -1,0 +1,88 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", "playground/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", "examples/**", "tests/cases/**", "src/**", "playground/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: docs-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build the compiler
+        run: cargo build
+
+      # The playground's check() must print what `balanc --json` prints; this
+      # builds the CLI and compares the two over every example, byte for byte.
+      - name: Test the playground against the CLI
+        run: cargo test -p balanc-playground
+
+      # Compiles the playground crate to wasm32 and runs wasm-bindgen (the
+      # version pinned in Cargo.lock) into docs/src/playground/pkg, which the
+      # /playground route lazy-loads. Must run before the site build.
+      - name: Build the playground (WebAssembly)
+        run: playground/build.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install site dependencies
+        working-directory: docs
+        run: npm ci
+
+      # Every program and every line of compiler output on the site comes from
+      # outputs.generated.json. Regenerate it with the compiler built above and
+      # fail if the committed copy differs, so the site can never show output
+      # the current compiler would not print.
+      - name: Regenerate compiler output
+        working-directory: docs
+        run: node scripts/gen-outputs.mjs
+
+      - name: Check generated output is up to date
+        run: |
+          if ! git diff --exit-code -- docs/src/data/outputs.generated.json; then
+            echo "::error::docs/src/data/outputs.generated.json is stale. Run 'cargo build && (cd docs && node scripts/gen-outputs.mjs)' and commit the result."
+            exit 1
+          fi
+
+      - name: Type-check
+        working-directory: docs
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: docs
+        run: |
+          npm run build
+          # The playground degrades to a notice when the wasm is missing; in CI
+          # that would be a silent regression, so require it in the bundle.
+          ls dist/assets/*.wasm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-dist
+          path: docs/dist
+          retention-days: 7

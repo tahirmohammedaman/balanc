@@ -1,0 +1,21 @@
+[package]
+name = "balanc-playground"
+version = "0.1.0"
+edition = "2021"
+description = "WASM bindings that run the balanc compiler in the browser for the docs playground"
+license = "MIT"
+repository = "https://github.com/tahirmohammedaman/balanc"
+publish = false
+
+# Not a release artifact: keep `dist` from packaging it alongside the CLI.
+[package.metadata.dist]
+dist = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+balanc = { path = ".." }
+# Pinned exactly: the generated JS glue must come from a wasm-bindgen-cli of the
+# same version (playground/build.sh reads it from Cargo.lock).
+wasm-bindgen = "=0.2.130"

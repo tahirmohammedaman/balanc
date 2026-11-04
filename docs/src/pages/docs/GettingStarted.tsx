@@ -1,7 +1,12 @@
 import { Link } from "react-router-dom";
 import { DocPage } from "../../components/DocPage";
 import { C, DocTable, Step, Steps } from "../../components/Prose";
-import { Terminal } from "../../components/code/CodeBlock";
+import { RealOutput, Terminal } from "../../components/code/CodeBlock";
+import { program, terminalText } from "../../data/programs";
+
+// The real `--json` success output for coffee.bal is the report wrapped in
+// {"ok":true,"report":...}; reconstructed from the generated plain output.
+const JSON_OK = JSON.stringify({ ok: true, report: program("examples/coffee.bal").stdout });
 
 export function GettingStarted() {
   return (
@@ -49,37 +54,19 @@ export function GettingStarted() {
           <Terminal
             lines={[
               { type: "cmd", text: "cargo run -- examples/coffee.bal" },
-              {
-                type: "out",
-                text: "Trial Balance (ETB)\n  assets:cash                    -45.00\n  expenses:coffee                 45.00\n  Debit total                      0.00\n  Credit total                     0.00",
-              },
+              { type: "out", text: terminalText(program("examples/coffee.bal")) },
             ]}
           />
         </Step>
 
         <Step title="See a diagnostic">
           <p>
-            Every money value must be consumed. Comment out the <C>debit</C> line and re-run, and the compiler
-            catches the drop before anything executes:
+            Every money value must be consumed. Delete the <C>debit</C> line (the result is checked in as{" "}
+            <C>examples/coffee_forgotten.bal</C>) and the compiler catches the drop before anything executes:
           </p>
-          <Terminal
-            lines={[
-              { type: "cmd", text: "cargo run -- examples/coffee.bal" },
-              {
-                type: "out",
-                text:
-                  "error[E_DROPPED]: this money value is never consumed\n" +
-                  "  --> coffee.bal:6:7\n" +
-                  "  |\n" +
-                  "6 |   let m = credit(assets:cash, 45.00);\n" +
-                  "  |       ^\n" +
-                  "  = note: every money value bound in a transaction must be consumed exactly\n" +
-                  "    once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'",
-              },
-            ]}
-          />
+          <RealOutput path="examples/coffee_forgotten.bal" prefix="cargo run --" />
           <p>
-            See the full <Link to="/docs/diagnostics">diagnostics reference</Link> for every error code.
+            The <Link to="/docs/errors">error catalogue</Link> lists every code, each with a program that triggers it.
           </p>
         </Step>
 
@@ -91,7 +78,7 @@ export function GettingStarted() {
           <Terminal
             lines={[
               { type: "cmd", text: "cargo run -- --json examples/coffee.bal" },
-              { type: "out", text: '{"ok":true,"report":"Trial Balance (ETB)\\n  assets:cash ..."}' },
+              { type: "out", text: JSON_OK },
             ]}
           />
         </Step>
@@ -109,10 +96,7 @@ export function GettingStarted() {
               { type: "cmd", text: "javac -d out runtime/balanc/runtime/Ledger.java" },
               { type: "cmd", text: "cp Coffee.class out/" },
               { type: "cmd", text: "java -cp out Coffee" },
-              {
-                type: "out",
-                text: "Trial Balance (ETB)\n  assets:cash                    -45.00\n  expenses:coffee                 45.00\n  Debit total                      0.00\n  Credit total                     0.00",
-              },
+              { type: "out", text: terminalText(program("examples/coffee.bal")) },
             ]}
           />
           <p>
