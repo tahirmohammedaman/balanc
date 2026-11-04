@@ -9,7 +9,8 @@ import { CoreConcepts } from "./pages/docs/CoreConcepts";
 import { SyntaxReference } from "./pages/docs/SyntaxReference";
 import { TypeSystem } from "./pages/docs/TypeSystem";
 import { OperationsReference } from "./pages/docs/OperationsReference";
-import { Diagnostics } from "./pages/docs/Diagnostics";
+import { ErrorCatalogue } from "./pages/docs/ErrorCatalogue";
+import { Tour } from "./pages/docs/Tour";
 import { CompilerArchitecture } from "./pages/docs/CompilerArchitecture";
 import { JvmBackend } from "./pages/docs/JvmBackend";
 import { CliReference } from "./pages/docs/CliReference";
@@ -33,7 +34,9 @@ export function App() {
             <Route path="language/syntax-reference" element={<SyntaxReference />} />
             <Route path="language/type-system" element={<TypeSystem />} />
             <Route path="language/operations-reference" element={<OperationsReference />} />
-            <Route path="diagnostics" element={<Diagnostics />} />
+            <Route path="tour" element={<Tour />} />
+            <Route path="errors" element={<ErrorCatalogue />} />
+            <Route path="diagnostics" element={<Navigate to="/docs/errors" replace />} />
             <Route path="architecture/compiler" element={<CompilerArchitecture />} />
             <Route path="architecture/jvm-backend" element={<JvmBackend />} />
             <Route path="cli-reference" element={<CliReference />} />

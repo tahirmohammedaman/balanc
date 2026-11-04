@@ -9,6 +9,21 @@ npm install
 npm run dev
 ```
 
+## Compiler output
+
+Every program and every line of compiler output on the site is read from
+`src/data/outputs.generated.json`, produced by running the real compiler over
+`examples/**/*.bal` and `tests/cases/*.bal`:
+
+```
+cargo build                      # in the repo root
+npm run gen:outputs              # in docs/
+```
+
+The script fails if any code in `src/diag/codes.rs` has no program that
+triggers it (add one under `examples/errors/`). CI (`.github/workflows/docs.yml`)
+regenerates the file and fails if the committed copy is stale.
+
 ## Build
 
 ```
@@ -38,10 +53,14 @@ src/
 ├── App.tsx                 route table
 ├── context/ThemeContext.tsx  dark/light theme, persisted to localStorage
 ├── components/              shared UI: nav, sidebar, code blocks, doc-page chrome
-│   └── code/                 hand-written syntax tokenizer + CodeBlock/Terminal
+│   └── code/                 highlight.js grammars (hljs-balanc.ts) + CodeBlock/Terminal/ProgramBlock
 ├── data/nav.ts               the sidebar's page tree (also drives prev/next + search)
+├── data/programs.ts          typed access to outputs.generated.json
 ├── pages/Landing.tsx         marketing landing page ("/")
 └── pages/docs/*.tsx          one component per documentation page, routed under "/docs/*"
 ```
 
-Every code sample is authored as a plain string and highlighted client-side by a small regex-based tokenizer (`src/components/code/tokenize.ts`) — no highlighting library, matching the source project's own zero-dependency approach where it reasonably applies to a docs site.
+Code is highlighted with highlight.js core. `src/components/code/hljs-balanc.ts`
+defines two grammars, `balanc` (`.bal` source, token set mirroring
+`src/lex/mod.rs`) and `balanc-output` (diagnostics and trial balances), as plain
+`LanguageFn`s usable in any highlight.js setup.

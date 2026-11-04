@@ -1,0 +1,380 @@
+{
+  "compiler": "balanc 0.1.0",
+  "codes": [
+    "E_LEX_UNEXPECTED_CHAR",
+    "E_PARSE_UNEXPECTED_TOKEN",
+    "E_PARSE_UNEXPECTED_EOF",
+    "E_UNBOUND_NAME",
+    "E_UNKNOWN_CURRENCY",
+    "E_DUPLICATE_CURRENCY",
+    "E_DUPLICATE_ACCOUNT",
+    "E_UNDECLARED_ACCOUNT",
+    "E_TOO_MANY_FRACTION_DIGITS",
+    "E_AMOUNT_OUT_OF_RANGE",
+    "E_CURRENCY_MISMATCH",
+    "E_UNDECLARED_RATE",
+    "E_DUPLICATE_RATE",
+    "E_EXPECTED_MONEY",
+    "E_EXPECTED_RESIDUE",
+    "E_DROPPED",
+    "E_REUSED",
+    "E_UNBALANCED",
+    "E_EXPR_TOO_DEEP",
+    "E_ZERO_RATIO",
+    "E_UNKNOWN_ACCOUNT_KIND"
+  ],
+  "programs": {
+    "examples/coffee.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, m);\n}\n",
+      "command": "balanc examples/coffee.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (ETB)\n  assets:cash                    -45.00\n  expenses:coffee                 45.00\n  Debit total                      0.00\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "examples/coffee_forgotten.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n}\n",
+      "command": "balanc examples/coffee_forgotten.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DROPPED]: this money value is never consumed\n  --> examples/coffee_forgotten.bal:7:7\n  |\n7 |   let m = credit(assets:cash, 45.00);\n  |       ^\n  = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DROPPED\",\"message\":\"this money value is never consumed\",\"file\":\"examples/coffee_forgotten.bal\",\"line\":7,\"col\":7,\"span\":{\"lo\":194,\"hi\":195},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_DROPPED"
+      ]
+    },
+    "examples/coffee_split.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\naccount expenses:pastry { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee and a pastry, paid once\" {\n  let m = credit(assets:cash, 45.00);\n  let (coffee, pastry) = split(m, 30.00);\n  debit(expenses:coffee, coffee);\n  debit(expenses:pastry, pastry);\n}\n",
+      "command": "balanc examples/coffee_split.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (ETB)\n  assets:cash                    -45.00\n  expenses:coffee                 30.00\n  expenses:pastry                 15.00\n  Debit total                      0.00\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "examples/coffee_twice.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\naccount expenses:pastry { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee and a pastry, paid once\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, m);\n  debit(expenses:pastry, m);\n}\n",
+      "command": "balanc examples/coffee_twice.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_REUSED]: this value has already been consumed\n   --> examples/coffee_twice.bal:10:26\n   |\n10 |   debit(expenses:pastry, m);\n   |                          ^\n   = note: every money value bound in a transaction may only be consumed once — bind a new value instead of reusing this one\n\nnote: first consumed here\n   --> examples/coffee_twice.bal:9:26\n   |\n 9 |   debit(expenses:coffee, m);\n   |                          ^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_REUSED\",\"message\":\"this value has already been consumed\",\"file\":\"examples/coffee_twice.bal\",\"line\":10,\"col\":26,\"span\":{\"lo\":379,\"hi\":380},\"secondary\":[{\"label\":\"first consumed here\",\"line\":9,\"col\":26,\"span\":{\"lo\":350,\"hi\":351}}]}]}\n",
+      "codes": [
+        "E_REUSED"
+      ]
+    },
+    "examples/errors/duplicate_account.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\n",
+      "command": "balanc examples/errors/duplicate_account.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DUPLICATE_ACCOUNT]: account 'assets:cash' is already declared\n  --> examples/errors/duplicate_account.bal:4:9\n  |\n4 | account assets:cash { currency = ETB, kind = asset, normal = debit }\n  |         ^^^^^^^^^^^\n  = note: each account path may only be declared once\n\nnote: first declared here\n  --> examples/errors/duplicate_account.bal:3:9\n  |\n3 | account assets:cash { currency = ETB, kind = asset, normal = debit }\n  |         ^^^^^^^^^^^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DUPLICATE_ACCOUNT\",\"message\":\"account 'assets:cash' is already declared\",\"file\":\"examples/errors/duplicate_account.bal\",\"line\":4,\"col\":9,\"span\":{\"lo\":105,\"hi\":116},\"secondary\":[{\"label\":\"first declared here\",\"line\":3,\"col\":9,\"span\":{\"lo\":36,\"hi\":47}}]}]}\n",
+      "codes": [
+        "E_DUPLICATE_ACCOUNT"
+      ]
+    },
+    "examples/errors/duplicate_currency.bal": {
+      "source": "currency ETB { scale = 2 }\ncurrency ETB { scale = 3 }\n",
+      "command": "balanc examples/errors/duplicate_currency.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DUPLICATE_CURRENCY]: currency 'ETB' is already declared\n  --> examples/errors/duplicate_currency.bal:2:10\n  |\n2 | currency ETB { scale = 3 }\n  |          ^^^\n  = note: each currency name may only be declared once\n\nnote: first declared here\n  --> examples/errors/duplicate_currency.bal:1:10\n  |\n1 | currency ETB { scale = 2 }\n  |          ^^^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DUPLICATE_CURRENCY\",\"message\":\"currency 'ETB' is already declared\",\"file\":\"examples/errors/duplicate_currency.bal\",\"line\":2,\"col\":10,\"span\":{\"lo\":36,\"hi\":39},\"secondary\":[{\"label\":\"first declared here\",\"line\":1,\"col\":10,\"span\":{\"lo\":9,\"hi\":12}}]}]}\n",
+      "codes": [
+        "E_DUPLICATE_CURRENCY"
+      ]
+    },
+    "examples/errors/duplicate_rate.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\nrate usd_etb from USD to ETB = 57.20 round down;\nrate usd_etb from USD to ETB = 57.35 round down;\n",
+      "command": "balanc examples/errors/duplicate_rate.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DUPLICATE_RATE]: rate 'usd_etb' is already declared\n  --> examples/errors/duplicate_rate.bal:5:6\n  |\n5 | rate usd_etb from USD to ETB = 57.35 round down;\n  |      ^^^^^^^\n  = note: each rate name may only be declared once\n\nnote: first declared here\n  --> examples/errors/duplicate_rate.bal:4:6\n  |\n4 | rate usd_etb from USD to ETB = 57.20 round down;\n  |      ^^^^^^^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DUPLICATE_RATE\",\"message\":\"rate 'usd_etb' is already declared\",\"file\":\"examples/errors/duplicate_rate.bal\",\"line\":5,\"col\":6,\"span\":{\"lo\":109,\"hi\":116},\"secondary\":[{\"label\":\"first declared here\",\"line\":4,\"col\":6,\"span\":{\"lo\":60,\"hi\":67}}]}]}\n",
+      "codes": [
+        "E_DUPLICATE_RATE"
+      ]
+    },
+    "examples/errors/expr_too_deep.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(m, m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m));\n}\n",
+      "command": "balanc examples/errors/expr_too_deep.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_EXPR_TOO_DEEP]: expression nested more than 256 levels deep\n  --> examples/errors/expr_too_deep.bal:8:1562\n  |\n8 |   debit(expenses:coffee, merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(merge(m, m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m), m));\n  |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^^^^^\n  = note: flatten this expression — deeply nested 'merge' chains are rejected before they risk overflowing the parser's stack\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_EXPR_TOO_DEEP\",\"message\":\"expression nested more than 256 levels deep\",\"file\":\"examples/errors/expr_too_deep.bal\",\"line\":8,\"col\":1562,\"span\":{\"lo\":1787,\"hi\":1792},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_EXPR_TOO_DEEP"
+      ]
+    },
+    "examples/errors/lex_unexpected_char.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, m) # paid in cash\n}\n",
+      "command": "balanc examples/errors/lex_unexpected_char.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_LEX_UNEXPECTED_CHAR]: unexpected character '#'\n  --> examples/errors/lex_unexpected_char.bal:8:29\n  |\n8 |   debit(expenses:coffee, m) # paid in cash\n  |                             ^\n  = note: remove or replace the invalid character\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_LEX_UNEXPECTED_CHAR\",\"message\":\"unexpected character '#'\",\"file\":\"examples/errors/lex_unexpected_char.bal\",\"line\":8,\"col\":29,\"span\":{\"lo\":254,\"hi\":255},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_LEX_UNEXPECTED_CHAR"
+      ]
+    },
+    "examples/errors/parse_unexpected_eof.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, m);\n",
+      "command": "balanc examples/errors/parse_unexpected_eof.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_PARSE_UNEXPECTED_EOF]: expected '}', found end of input\n  --> examples/errors/parse_unexpected_eof.bal:9:1\n  |\n9 | \n  | ^\n  = note: the file ended before a construct was closed — check for a missing '}' or ';'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_PARSE_UNEXPECTED_EOF\",\"message\":\"expected '}', found end of input\",\"file\":\"examples/errors/parse_unexpected_eof.bal\",\"line\":9,\"col\":1,\"span\":{\"lo\":255,\"hi\":255},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_PARSE_UNEXPECTED_EOF"
+      ]
+    },
+    "examples/errors/parse_unexpected_token.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00)\n  debit(expenses:coffee, m);\n}\n",
+      "command": "balanc examples/errors/parse_unexpected_token.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_PARSE_UNEXPECTED_TOKEN]: expected ';', found 'debit'\n  --> examples/errors/parse_unexpected_token.bal:8:3\n  |\n8 |   debit(expenses:coffee, m);\n  |   ^^^^^\n  = note: check the grammar for what's expected at this point\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_PARSE_UNEXPECTED_TOKEN\",\"message\":\"expected ';', found 'debit'\",\"file\":\"examples/errors/parse_unexpected_token.bal\",\"line\":8,\"col\":3,\"span\":{\"lo\":227,\"hi\":232},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_PARSE_UNEXPECTED_TOKEN"
+      ]
+    },
+    "examples/errors/unbound_name.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, n);\n}\n",
+      "command": "balanc examples/errors/unbound_name.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNBOUND_NAME]: no binding named 'n' in scope\n  --> examples/errors/unbound_name.bal:8:26\n  |\n8 |   debit(expenses:coffee, n);\n  |                          ^\n  = note: check the spelling, or add a 'let' binding for this name earlier in the transaction\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNBOUND_NAME\",\"message\":\"no binding named 'n' in scope\",\"file\":\"examples/errors/unbound_name.bal\",\"line\":8,\"col\":26,\"span\":{\"lo\":251,\"hi\":252},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNBOUND_NAME"
+      ]
+    },
+    "examples/errors/undeclared_rate.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount income:fx_rounding { currency = ETB, kind = income, normal = credit }\n\ntxn \"fx\" {\n  let m = credit(assets:usd_cash, 100.00);\n  let (m2, r) = convert(m, usd_etb);\n  debit(assets:etb_cash, m2);\n  absorb(r, income:fx_rounding);\n}\n",
+      "command": "balanc examples/errors/undeclared_rate.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNDECLARED_RATE]: no rate named 'usd_etb' is declared\n   --> examples/errors/undeclared_rate.bal:10:28\n   |\n10 |   let (m2, r) = convert(m, usd_etb);\n   |                            ^^^^^^^\n   = note: declare this rate with a 'rate NAME from A to B = VALUE round down;' statement before referencing it\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNDECLARED_RATE\",\"message\":\"no rate named 'usd_etb' is declared\",\"file\":\"examples/errors/undeclared_rate.bal\",\"line\":10,\"col\":28,\"span\":{\"lo\":361,\"hi\":368},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNDECLARED_RATE"
+      ]
+    },
+    "examples/errors/unknown_account_kind.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = assets, normal = debit }\n",
+      "command": "balanc examples/errors/unknown_account_kind.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNKNOWN_ACCOUNT_KIND]: no such account kind 'assets' (expected one of: asset, liability, equity, income, expense)\n  --> examples/errors/unknown_account_kind.bal:3:46\n  |\n3 | account assets:cash { currency = ETB, kind = assets, normal = debit }\n  |                                              ^^^^^^\n  = note: kind must be one of: asset, liability, equity, income, expense\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNKNOWN_ACCOUNT_KIND\",\"message\":\"no such account kind 'assets' (expected one of: asset, liability, equity, income, expense)\",\"file\":\"examples/errors/unknown_account_kind.bal\",\"line\":3,\"col\":46,\"span\":{\"lo\":73,\"hi\":79},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNKNOWN_ACCOUNT_KIND"
+      ]
+    },
+    "tests/cases/amount_out_of_range.bal": {
+      "source": "currency JPY { scale = 0 }\n\naccount assets:cash { currency = JPY, kind = asset, normal = debit }\naccount expenses:coffee { currency = JPY, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  debit(expenses:coffee, credit(assets:cash, 999999999999999999999999999999));\n}\n",
+      "command": "balanc tests/cases/amount_out_of_range.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_AMOUNT_OUT_OF_RANGE]: this amount is too large to represent\n  --> tests/cases/amount_out_of_range.bal:7:46\n  |\n7 |   debit(expenses:coffee, credit(assets:cash, 999999999999999999999999999999));\n  |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  = note: this magnitude does not fit the fixed-point representation this language uses\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_AMOUNT_OUT_OF_RANGE\",\"message\":\"this amount is too large to represent\",\"file\":\"tests/cases/amount_out_of_range.bal\",\"line\":7,\"col\":46,\"span\":{\"lo\":233,\"hi\":263},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_AMOUNT_OUT_OF_RANGE"
+      ]
+    },
+    "tests/cases/coffee.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, m);\n}\n",
+      "command": "balanc tests/cases/coffee.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (ETB)\n  assets:cash                    -45.00\n  expenses:coffee                 45.00\n  Debit total                      0.00\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "tests/cases/convert_and_absorb.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount income:fx_rounding { currency = ETB, kind = income, normal = credit }\n\nrate usd_etb from USD to ETB = 57.20 round down;\n\ntxn \"fx\" {\n  let m = credit(assets:usd_cash, 100.01);\n  let (m2, r) = convert(m, usd_etb);\n  debit(assets:etb_cash, m2);\n  absorb(r, income:fx_rounding);\n}\n",
+      "command": "balanc tests/cases/convert_and_absorb.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (USD)\n  assets:usd_cash               -100.01\n  Debit total                   -100.01\n  Credit total                     0.00\nTrial Balance (ETB)\n  assets:etb_cash               5720.57\n  income:fx_rounding               0.00\n  Debit total                   5720.57\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "tests/cases/convert_currency_mismatch.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount income:fx_rounding { currency = ETB, kind = income, normal = credit }\n\nrate usd_etb from USD to ETB = 57.20 round down;\n\ntxn \"fx\" {\n  let m = credit(assets:etb_cash, 100.00);\n  let (m2, r) = convert(m, usd_etb);\n  debit(assets:etb_cash, m2);\n  absorb(r, income:fx_rounding);\n}\n",
+      "command": "balanc tests/cases/convert_currency_mismatch.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_CURRENCY_MISMATCH]: rate 'usd_etb' expects currency 'USD', but this money is 'ETB'\n   --> tests/cases/convert_currency_mismatch.bal:11:3\n   |\n11 |   let (m2, r) = convert(m, usd_etb);\n   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   = note: money only moves between accounts, rates, or residues that share the same currency — use 'convert' to cross currencies\n\nnote: this money's currency was established here\n   --> tests/cases/convert_currency_mismatch.bal:10:11\n   |\n10 |   let m = credit(assets:etb_cash, 100.00);\n   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_CURRENCY_MISMATCH\",\"message\":\"rate 'usd_etb' expects currency 'USD', but this money is 'ETB'\",\"file\":\"tests/cases/convert_currency_mismatch.bal\",\"line\":11,\"col\":3,\"span\":{\"lo\":313,\"hi\":347},\"secondary\":[{\"label\":\"this money's currency was established here\",\"line\":10,\"col\":11,\"span\":{\"lo\":278,\"hi\":309}}]}]}\n",
+      "codes": [
+        "E_CURRENCY_MISMATCH"
+      ]
+    },
+    "tests/cases/currency_mismatch.bal": {
+      "source": "currency ETB { scale = 2 }\ncurrency USD { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:usd_cash, 45.00);\n  debit(expenses:coffee, m);\n}\n",
+      "command": "balanc tests/cases/currency_mismatch.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_CURRENCY_MISMATCH]: account 'expenses:coffee' expects currency 'ETB', but this value is 'USD'\n  --> tests/cases/currency_mismatch.bal:9:3\n  |\n9 |   debit(expenses:coffee, m);\n  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  = note: money only moves between accounts, rates, or residues that share the same currency — use 'convert' to cross currencies\n\nnote: this value's currency was established here\n  --> tests/cases/currency_mismatch.bal:8:11\n  |\n8 |   let m = credit(assets:usd_cash, 45.00);\n  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_CURRENCY_MISMATCH\",\"message\":\"account 'expenses:coffee' expects currency 'ETB', but this value is 'USD'\",\"file\":\"tests/cases/currency_mismatch.bal\",\"line\":9,\"col\":3,\"span\":{\"lo\":263,\"hi\":289},\"secondary\":[{\"label\":\"this value's currency was established here\",\"line\":8,\"col\":11,\"span\":{\"lo\":229,\"hi\":259}}]}]}\n",
+      "codes": [
+        "E_CURRENCY_MISMATCH"
+      ]
+    },
+    "tests/cases/dropped.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n}\n",
+      "command": "balanc tests/cases/dropped.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DROPPED]: this money value is never consumed\n  --> tests/cases/dropped.bal:6:7\n  |\n6 |   let m = credit(assets:cash, 45.00);\n  |       ^\n  = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DROPPED\",\"message\":\"this money value is never consumed\",\"file\":\"tests/cases/dropped.bal\",\"line\":6,\"col\":7,\"span\":{\"lo\":119,\"hi\":120},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_DROPPED"
+      ]
+    },
+    "tests/cases/dropped_residue.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\n\nrate usd_etb from USD to ETB = 57.20 round down;\n\ntxn \"fx\" {\n  let m = credit(assets:usd_cash, 100.00);\n  let (m2, r) = convert(m, usd_etb);\n  debit(assets:etb_cash, m2);\n}\n",
+      "command": "balanc tests/cases/dropped_residue.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DROPPED]: this conversion residue is never consumed\n   --> tests/cases/dropped_residue.bal:11:12\n   |\n11 |   let (m2, r) = convert(m, usd_etb);\n   |            ^\n   = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DROPPED\",\"message\":\"this conversion residue is never consumed\",\"file\":\"tests/cases/dropped_residue.bal\",\"line\":11,\"col\":12,\"span\":{\"lo\":317,\"hi\":318},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_DROPPED"
+      ]
+    },
+    "tests/cases/dropped_split_half.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:rent { currency = ETB, kind = expense, normal = debit }\n\ntxn \"rent\" {\n  let m = credit(assets:cash, 100.00);\n  let (a, b) = split(m, 40.00);\n  debit(expenses:rent, a);\n}\n",
+      "command": "balanc tests/cases/dropped_split_half.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_DROPPED]: this money value is never consumed\n  --> tests/cases/dropped_split_half.bal:8:11\n  |\n8 |   let (a, b) = split(m, 40.00);\n  |           ^\n  = note: every money value bound in a transaction must be consumed exactly once — consume it with 'debit', 'absorb', 'split', 'split_ratio', or 'merge'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_DROPPED\",\"message\":\"this money value is never consumed\",\"file\":\"tests/cases/dropped_split_half.bal\",\"line\":8,\"col\":11,\"span\":{\"lo\":233,\"hi\":234},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_DROPPED"
+      ]
+    },
+    "tests/cases/expected_money_found_residue.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount income:fx_rounding { currency = ETB, kind = income, normal = credit }\n\nrate usd_etb from USD to ETB = 57.20 round down;\n\ntxn \"fx\" {\n  let m = credit(assets:usd_cash, 100.00);\n  let (m2, r) = convert(m, usd_etb);\n  debit(assets:etb_cash, m2);\n  debit(income:fx_rounding, r);\n}\n",
+      "command": "balanc tests/cases/expected_money_found_residue.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_EXPECTED_MONEY]: this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it\n   --> tests/cases/expected_money_found_residue.bal:14:29\n   |\n14 |   debit(income:fx_rounding, r);\n   |                             ^\n   = note: this binding holds a conversion residue — discharge it with 'absorb', not 'debit'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_EXPECTED_MONEY\",\"message\":\"this is a conversion residue, not money — use 'absorb', not 'debit', to discharge it\",\"file\":\"tests/cases/expected_money_found_residue.bal\",\"line\":14,\"col\":29,\"span\":{\"lo\":479,\"hi\":480},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_EXPECTED_MONEY"
+      ]
+    },
+    "tests/cases/expected_residue_found_money.bal": {
+      "source": "currency USD { scale = 2 }\ncurrency ETB { scale = 2 }\n\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount income:fx_rounding { currency = ETB, kind = income, normal = credit }\n\nrate usd_etb from USD to ETB = 57.20 round down;\n\ntxn \"fx\" {\n  let m = credit(assets:usd_cash, 100.00);\n  let (m2, r) = convert(m, usd_etb);\n  absorb(m2, income:fx_rounding);\n  absorb(r, income:fx_rounding);\n}\n",
+      "command": "balanc tests/cases/expected_residue_found_money.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_EXPECTED_RESIDUE]: this is money, not a conversion residue — use 'debit', not 'absorb', to discharge it\n   --> tests/cases/expected_residue_found_money.bal:13:10\n   |\n13 |   absorb(m2, income:fx_rounding);\n   |          ^^\n   = note: this binding holds ordinary money — discharge it with 'debit', not 'absorb'\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_EXPECTED_RESIDUE\",\"message\":\"this is money, not a conversion residue — use 'debit', not 'absorb', to discharge it\",\"file\":\"tests/cases/expected_residue_found_money.bal\",\"line\":13,\"col\":10,\"span\":{\"lo\":430,\"hi\":432},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_EXPECTED_RESIDUE"
+      ]
+    },
+    "tests/cases/merge_reused.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:coffee, merge(m, m));\n}\n",
+      "command": "balanc tests/cases/merge_reused.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_REUSED]: this value has already been consumed\n  --> tests/cases/merge_reused.bal:8:35\n  |\n8 |   debit(expenses:coffee, merge(m, m));\n  |                                   ^\n  = note: every money value bound in a transaction may only be consumed once — bind a new value instead of reusing this one\n\nnote: first consumed here\n  --> tests/cases/merge_reused.bal:8:32\n  |\n8 |   debit(expenses:coffee, merge(m, m));\n  |                                ^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_REUSED\",\"message\":\"this value has already been consumed\",\"file\":\"tests/cases/merge_reused.bal\",\"line\":8,\"col\":35,\"span\":{\"lo\":260,\"hi\":261},\"secondary\":[{\"label\":\"first consumed here\",\"line\":8,\"col\":32,\"span\":{\"lo\":257,\"hi\":258}}]}]}\n",
+      "codes": [
+        "E_REUSED"
+      ]
+    },
+    "tests/cases/multi_currency.bal": {
+      "source": "currency ETB { scale = 2 }\ncurrency USD { scale = 2 }\n\naccount assets:etb_cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:coffee { currency = ETB, kind = expense, normal = debit }\naccount assets:usd_cash { currency = USD, kind = asset, normal = debit }\naccount expenses:software { currency = USD, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  debit(expenses:coffee, credit(assets:etb_cash, 45.00));\n}\n\ntxn \"saas\" {\n  debit(expenses:software, credit(assets:usd_cash, 10.00));\n}\n",
+      "command": "balanc tests/cases/multi_currency.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (ETB)\n  assets:etb_cash                -45.00\n  expenses:coffee                 45.00\n  Debit total                      0.00\n  Credit total                     0.00\nTrial Balance (USD)\n  assets:usd_cash                -10.00\n  expenses:software               10.00\n  Debit total                      0.00\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "tests/cases/reused.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:a { currency = ETB, kind = expense, normal = debit }\naccount expenses:b { currency = ETB, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  let m = credit(assets:cash, 45.00);\n  debit(expenses:a, m);\n  debit(expenses:b, m);\n}\n",
+      "command": "balanc tests/cases/reused.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_REUSED]: this value has already been consumed\n   --> tests/cases/reused.bal:10:21\n   |\n10 |   debit(expenses:b, m);\n   |                     ^\n   = note: every money value bound in a transaction may only be consumed once — bind a new value instead of reusing this one\n\nnote: first consumed here\n   --> tests/cases/reused.bal:9:21\n   |\n 9 |   debit(expenses:a, m);\n   |                     ^\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_REUSED\",\"message\":\"this value has already been consumed\",\"file\":\"tests/cases/reused.bal\",\"line\":10,\"col\":21,\"span\":{\"lo\":335,\"hi\":336},\"secondary\":[{\"label\":\"first consumed here\",\"line\":9,\"col\":21,\"span\":{\"lo\":311,\"hi\":312}}]}]}\n",
+      "codes": [
+        "E_REUSED"
+      ]
+    },
+    "tests/cases/split_and_merge.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:rent { currency = ETB, kind = expense, normal = debit }\naccount expenses:utilities { currency = ETB, kind = expense, normal = debit }\n\ntxn \"split rent three ways\" {\n  let m = credit(assets:cash, 300.00);\n  let (a, remainder) = split(m, 100.00);\n  let (b, c) = split_ratio(remainder, 1, 1);\n  debit(expenses:rent, merge(a, b));\n  debit(expenses:utilities, c);\n}\n",
+      "command": "balanc tests/cases/split_and_merge.bal",
+      "exit": 0,
+      "stdout": "Trial Balance (ETB)\n  assets:cash                   -300.00\n  expenses:rent                  200.00\n  expenses:utilities             100.00\n  Debit total                      0.00\n  Credit total                     0.00\n",
+      "stderr": "",
+      "json": null,
+      "codes": []
+    },
+    "tests/cases/split_unbalanced.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:rent { currency = ETB, kind = expense, normal = debit }\naccount expenses:utilities { currency = ETB, kind = expense, normal = debit }\n\ntxn \"rent\" {\n  let m = credit(assets:cash, 100.00);\n  let (a, b) = split(m, 250.00);\n  debit(expenses:rent, a);\n  debit(expenses:utilities, b);\n}\n",
+      "command": "balanc tests/cases/split_unbalanced.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNBALANCED]: cannot split off 250.00 — only 100.00 is available\n  --> tests/cases/split_unbalanced.bal:9:25\n  |\n9 |   let (a, b) = split(m, 250.00);\n  |                         ^^^^^^\n  = note: this operation would create or destroy money — check the amount against what's actually available\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNBALANCED\",\"message\":\"cannot split off 250.00 — only 100.00 is available\",\"file\":\"tests/cases/split_unbalanced.bal\",\"line\":9,\"col\":25,\"span\":{\"lo\":325,\"hi\":331},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNBALANCED"
+      ]
+    },
+    "tests/cases/too_many_fraction_digits.bal": {
+      "source": "currency JPY { scale = 0 }\n\naccount assets:cash { currency = JPY, kind = asset, normal = debit }\naccount expenses:coffee { currency = JPY, kind = expense, normal = debit }\n\ntxn \"coffee\" {\n  debit(expenses:coffee, credit(assets:cash, 45.50));\n}\n",
+      "command": "balanc tests/cases/too_many_fraction_digits.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_TOO_MANY_FRACTION_DIGITS]: amount has 2 fractional digits, but currency 'JPY' has scale 0\n  --> tests/cases/too_many_fraction_digits.bal:7:46\n  |\n7 |   debit(expenses:coffee, credit(assets:cash, 45.50));\n  |                                              ^^^^^\n  = note: round the literal to the currency's declared scale, or declare the currency with a larger scale\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_TOO_MANY_FRACTION_DIGITS\",\"message\":\"amount has 2 fractional digits, but currency 'JPY' has scale 0\",\"file\":\"tests/cases/too_many_fraction_digits.bal\",\"line\":7,\"col\":46,\"span\":{\"lo\":233,\"hi\":238},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_TOO_MANY_FRACTION_DIGITS"
+      ]
+    },
+    "tests/cases/undeclared_account.bal": {
+      "source": "currency ETB { scale = 2 }\n\ntxn \"coffee\" {\n  debit(expenses:coffee, credit(assets:cash, 45.00));\n}\n",
+      "command": "balanc tests/cases/undeclared_account.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared\n  --> tests/cases/undeclared_account.bal:4:9\n  |\n4 |   debit(expenses:coffee, credit(assets:cash, 45.00));\n  |         ^^^^^^^^^^^^^^^\n  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it\n\nerror[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared\n  --> tests/cases/undeclared_account.bal:4:33\n  |\n4 |   debit(expenses:coffee, credit(assets:cash, 45.00));\n  |                                 ^^^^^^^^^^^\n  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNDECLARED_ACCOUNT\",\"message\":\"no account named 'expenses:coffee' is declared\",\"file\":\"tests/cases/undeclared_account.bal\",\"line\":4,\"col\":9,\"span\":{\"lo\":51,\"hi\":66},\"secondary\":[]},{\"code\":\"E_UNDECLARED_ACCOUNT\",\"message\":\"no account named 'assets:cash' is declared\",\"file\":\"tests/cases/undeclared_account.bal\",\"line\":4,\"col\":33,\"span\":{\"lo\":75,\"hi\":86},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNDECLARED_ACCOUNT"
+      ]
+    },
+    "tests/cases/unknown_currency.bal": {
+      "source": "account assets:cash { currency = USD, kind = asset, normal = debit }\n\ntxn \"coffee\" {\n  debit(expenses:coffee, credit(assets:cash, 45.00));\n}\n",
+      "command": "balanc tests/cases/unknown_currency.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_UNKNOWN_CURRENCY]: no currency named 'USD' is declared\n  --> tests/cases/unknown_currency.bal:1:34\n  |\n1 | account assets:cash { currency = USD, kind = asset, normal = debit }\n  |                                  ^^^\n  = note: declare this currency with a 'currency NAME { scale = N }' block before referencing it\n\nerror[E_UNDECLARED_ACCOUNT]: no account named 'expenses:coffee' is declared\n  --> tests/cases/unknown_currency.bal:4:9\n  |\n4 |   debit(expenses:coffee, credit(assets:cash, 45.00));\n  |         ^^^^^^^^^^^^^^^\n  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it\n\nerror[E_UNDECLARED_ACCOUNT]: no account named 'assets:cash' is declared\n  --> tests/cases/unknown_currency.bal:4:33\n  |\n4 |   debit(expenses:coffee, credit(assets:cash, 45.00));\n  |                                 ^^^^^^^^^^^\n  = note: declare this account with an 'account PATH { ... }' block before crediting or debiting it\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_UNKNOWN_CURRENCY\",\"message\":\"no currency named 'USD' is declared\",\"file\":\"tests/cases/unknown_currency.bal\",\"line\":1,\"col\":34,\"span\":{\"lo\":33,\"hi\":36},\"secondary\":[]},{\"code\":\"E_UNDECLARED_ACCOUNT\",\"message\":\"no account named 'expenses:coffee' is declared\",\"file\":\"tests/cases/unknown_currency.bal\",\"line\":4,\"col\":9,\"span\":{\"lo\":93,\"hi\":108},\"secondary\":[]},{\"code\":\"E_UNDECLARED_ACCOUNT\",\"message\":\"no account named 'assets:cash' is declared\",\"file\":\"tests/cases/unknown_currency.bal\",\"line\":4,\"col\":33,\"span\":{\"lo\":117,\"hi\":128},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_UNKNOWN_CURRENCY",
+        "E_UNDECLARED_ACCOUNT"
+      ]
+    },
+    "tests/cases/zero_ratio.bal": {
+      "source": "currency ETB { scale = 2 }\n\naccount assets:cash { currency = ETB, kind = asset, normal = debit }\naccount expenses:rent { currency = ETB, kind = expense, normal = debit }\naccount expenses:utilities { currency = ETB, kind = expense, normal = debit }\n\ntxn \"rent\" {\n  let m = credit(assets:cash, 100.00);\n  let (a, b) = split_ratio(m, 0, 0);\n  debit(expenses:rent, a);\n  debit(expenses:utilities, b);\n}\n",
+      "command": "balanc tests/cases/zero_ratio.bal",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "error[E_ZERO_RATIO]: split_ratio's weights are both zero, which doesn't determine an allocation\n  --> tests/cases/zero_ratio.bal:9:31\n  |\n9 |   let (a, b) = split_ratio(m, 0, 0);\n  |                               ^^^^\n  = note: at least one of split_ratio's two weights must be nonzero\n",
+      "json": "{\"ok\":false,\"diagnostics\":[{\"code\":\"E_ZERO_RATIO\",\"message\":\"split_ratio's weights are both zero, which doesn't determine an allocation\",\"file\":\"tests/cases/zero_ratio.bal\",\"line\":9,\"col\":31,\"span\":{\"lo\":331,\"hi\":335},\"secondary\":[]}]}\n",
+      "codes": [
+        "E_ZERO_RATIO"
+      ]
+    }
+  }
+}

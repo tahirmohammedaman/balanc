@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { DocPage } from "../../components/DocPage";
 import { C, Callout, DocTable } from "../../components/Prose";
 import { Terminal } from "../../components/code/CodeBlock";
+import { COMPILER_VERSION } from "../../data/programs";
 
 export function Installation() {
   return (
@@ -90,7 +91,7 @@ export function Installation() {
       </p>
 
       <h2>Verify</h2>
-      <Terminal lines={[{ type: "cmd", text: "balanc --version" }, { type: "out", text: "balanc 0.1.0" }]} />
+      <Terminal lines={[{ type: "cmd", text: "balanc --version" }, { type: "out", text: COMPILER_VERSION }]} />
 
       <Callout title="Zero runtime dependencies">
         <p>

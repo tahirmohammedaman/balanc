@@ -35,7 +35,7 @@ export function DocsLayout() {
       <div className="wrap">
         <div className="docs-shell">
           <Sidebar open={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
-          <main className="docs-main" ref={mainRef}>
+          <main className="docs-main" id="main" ref={mainRef}>
             <Outlet />
           </main>
           <TableOfContents headings={headings} />

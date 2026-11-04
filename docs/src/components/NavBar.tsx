@@ -10,30 +10,27 @@ interface NavBarProps {
 
 export function NavBar({ leading, variant = "landing" }: NavBarProps) {
   return (
-    <nav className="site-nav">
+    <nav className={`site-nav ${variant}`} aria-label="Site">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <div className="wrap">
         {leading}
         <NavLink className="brand" to="/" end>
           <BrandMark />
           balanc
-          <span className="tag">{variant === "docs" ? "docs" : "linear-money DSL"}</span>
         </NavLink>
         <div className="nav-links">
-          {variant === "landing" ? (
-            <>
-              <NavLink to="/docs/getting-started">Get Started</NavLink>
-              <NavLink to="/docs/language/core-concepts">Language</NavLink>
-              <NavLink to="/docs/architecture/jvm-backend">JVM Backend</NavLink>
-              <NavLink to="/docs/introduction">Docs</NavLink>
-            </>
-          ) : (
-            <NavLink to="/" end>
-              Home
-            </NavLink>
-          )}
+          <NavLink to="/docs/tour">Tour</NavLink>
+          <NavLink to="/docs/introduction" className={({ isActive }) => (isActive ? "active" : "")}>
+            Docs
+          </NavLink>
+          <NavLink to="/docs/errors">Errors</NavLink>
         </div>
         <div className="nav-spacer" />
-        <span className="nav-cli">cargo run -- examples/coffee.bal</span>
+        <a className="nav-gh" href="https://github.com/tahirmohammedaman/balanc">
+          GitHub
+        </a>
         <ThemeToggle />
       </div>
     </nav>
